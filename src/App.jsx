@@ -89,7 +89,6 @@ const CommonUI = ({ children, isAiLoading, aiMessage, confirmDialog, setConfirmD
 const TravelPlanner = () => {
   const [user, setUser] = useState(null);
   
-  // Share Code State
   const [shareCode, setShareCode] = useState(() => localStorage.getItem('trip_share_code') || '');
   const [inputShareCode, setInputShareCode] = useState('');
   const [isLoginStep, setIsLoginStep] = useState(!localStorage.getItem('trip_share_code'));
@@ -98,18 +97,15 @@ const TravelPlanner = () => {
   const [currentTripId, setCurrentTripId] = useState(null);
   const [trips, setTrips] = useState([]);
   
-  // Detail View State
   const [tripData, setTripData] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [editingConfig, setEditingConfig] = useState(null);
 
-  // Analysis State
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
-  // UI State
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
   const [alertInfo, setAlertInfo] = useState(null);
@@ -122,17 +118,13 @@ const TravelPlanner = () => {
     currencyRate: 1
   });
 
-  // Auth
   useEffect(() => {
-    const initAuth = async () => {
-        await signInAnonymously(auth);
-    };
+    const initAuth = async () => { await signInAnonymously(auth); };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
-  // Load Trips
   useEffect(() => {
     if (!user || !shareCode) return;
     const tripsRef = collection(db, 'artifacts', appId, 'public', 'data', 'trips');
@@ -146,7 +138,6 @@ const TravelPlanner = () => {
     return () => unsubscribe();
   }, [user, shareCode]);
 
-  // Load Detail
   useEffect(() => {
     if (!user || !currentTripId) return;
     const tripRef = doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId);
@@ -160,7 +151,6 @@ const TravelPlanner = () => {
     return () => unsubscribe();
   }, [user, currentTripId]);
 
-  // Helpers
   const formatCurrency = (amount) => new Intl.NumberFormat('ko-KR').format(amount);
   const getFormattedDate = (startDateStr, dayOffset) => {
     if (!startDateStr) return '';
@@ -177,7 +167,6 @@ const TravelPlanner = () => {
   };
   const showAlert = (message, type = 'info') => setAlertInfo({ message, type });
 
-  // Handlers
   const handleLogin = () => {
     if (!inputShareCode.trim()) return showAlert("공유 코드를 입력해주세요.", "error");
     const code = inputShareCode.trim();
@@ -271,12 +260,12 @@ const TravelPlanner = () => {
         if(!Array.isArray(items)) throw new Error("Invalid");
         const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
         
-        // Fix: Ensure we don't overwrite but append, and handle null preparation
-        const currentPrepSchedule = tripData.preparation?.schedule || [];
-        const updatedSchedule = [...currentPrepSchedule, ...newItems];
+        // BUG FIX: preparation이 없거나 schedule이 없는 경우 안전하게 처리
+        const currentPrep = tripData.preparation || { schedule: [] };
+        const currentSchedule = currentPrep.schedule || [];
+        const updatedSchedule = [...currentSchedule, ...newItems];
         
-        // Direct update call
-        await updateCurrentTrip({ preparation: { ...tripData.preparation, schedule: updatedSchedule } });
+        await updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
         
     } catch (e) { console.error(e); showAlert("추천 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
   };
@@ -300,33 +289,50 @@ const TravelPlanner = () => {
   
   const saveItem = () => {
     if (!editingItem || !tripData) return;
-    const isPrep = editingItem.dayId === 'preparation';
     
-    // Fix: Handle case where preparation might be undefined
-    if (isPrep && !tripData.preparation) {
-        tripData.preparation = { schedule: [] };
+    // 1. Preparation Item Logic
+    if (editingItem.dayId === 'preparation') {
+        const currentPrep = tripData.preparation || { schedule: [] };
+        const currentSchedule = currentPrep.schedule || [];
+        
+        let updatedSchedule;
+        if (currentSchedule.find(i => i.id === editingItem.id)) {
+            updatedSchedule = currentSchedule.map(i => i.id === editingItem.id ? editingItem : i);
+        } else {
+            updatedSchedule = [...currentSchedule, editingItem];
+        }
+        
+        updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
+    } 
+    // 2. Daily Schedule Logic
+    else {
+        const day = tripData.days.find(d => d.id === editingItem.dayId);
+        if (!day) return;
+
+        let updatedSchedule = day.schedule.map(i => i.id === editingItem.id ? editingItem : i);
+        if (!day.schedule.find(i => i.id === editingItem.id)) {
+            updatedSchedule.push(editingItem);
+            updatedSchedule.sort((a,b) => a.time.localeCompare(b.time));
+        }
+        
+        const updatedDays = tripData.days.map(d => d.id === editingItem.dayId ? { ...d, schedule: updatedSchedule } : d);
+        updateCurrentTrip({ days: updatedDays });
     }
-
-    const collection = isPrep ? tripData.preparation : tripData.days.find(d => d.id === editingItem.dayId);
-    if (!collection) return;
-
-    let updatedSchedule = collection.schedule.map(i => i.id === editingItem.id ? editingItem : i);
-    if (!collection.schedule.find(i => i.id === editingItem.id)) updatedSchedule.push(editingItem);
-    if (!isPrep) updatedSchedule.sort((a,b) => a.time.localeCompare(b.time));
-
-    const updatePayload = isPrep ? { preparation: { ...tripData.preparation, schedule: updatedSchedule } } 
-        : { days: tripData.days.map(d => d.id === editingItem.dayId ? { ...d, schedule: updatedSchedule } : d) };
     
-    updateCurrentTrip(updatePayload);
-    setIsModalOpen(false); setEditingItem(null);
+    setIsModalOpen(false); 
+    setEditingItem(null);
   };
 
   const deleteScheduleItem = (dayId, itemId) => {
-    const isPrep = dayId === 'preparation';
-    const updatePayload = isPrep 
-        ? { preparation: { ...tripData.preparation, schedule: tripData.preparation.schedule.filter(i => i.id !== itemId) } }
-        : { days: tripData.days.map(d => d.id === dayId ? { ...d, schedule: d.schedule.filter(i => i.id !== itemId) } : d) };
-    updateCurrentTrip(updatePayload); setIsModalOpen(false);
+    if (dayId === 'preparation') {
+        const currentPrep = tripData.preparation || { schedule: [] };
+        const updatedSchedule = (currentPrep.schedule || []).filter(i => i.id !== itemId);
+        updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
+    } else {
+        const updatedDays = tripData.days.map(d => d.id === dayId ? { ...d, schedule: d.schedule.filter(i => i.id !== itemId) } : d);
+        updateCurrentTrip({ days: updatedDays });
+    }
+    setIsModalOpen(false);
   };
 
   // --- Render ---
@@ -352,24 +358,25 @@ const TravelPlanner = () => {
         <CommonUI {...commonUIProps}>
             <div className="flex items-center justify-center p-4 min-h-[80vh]">
                 <div className="bg-white w-full max-w-md p-8 rounded-2xl shadow-lg">
-                    <h2 className="text-xl font-bold mb-6 text-gray-800">새 여행 계획</h2>
+                    <h2 className="text-xl font-bold mb-6 text-gray-900">새 여행 계획</h2>
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">여행 국가</label>
-                            <input type="text" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 태국" value={newTripConfig.country} onChange={e => setNewTripConfig({...newTripConfig, country: e.target.value})} />
+                            {/* FIX: 라벨 색상과 폰트 굵기 강화 */}
+                            <label className="block text-sm font-extrabold text-gray-900 mb-1">여행 국가</label>
+                            <input type="text" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="예: 태국" value={newTripConfig.country} onChange={e => setNewTripConfig({...newTripConfig, country: e.target.value})} />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">시작 날짜</label>
-                            <input type="date" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" value={newTripConfig.startDate} onChange={e => setNewTripConfig({...newTripConfig, startDate: e.target.value})} />
+                            <label className="block text-sm font-extrabold text-gray-900 mb-1">시작 날짜</label>
+                            <input type="date" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" value={newTripConfig.startDate} onChange={e => setNewTripConfig({...newTripConfig, startDate: e.target.value})} />
                         </div>
                         <div className="flex gap-4">
                             <div className="flex-1">
-                                <label className="block text-sm font-bold text-gray-700 mb-1">기간 (일)</label>
-                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 3" value={newTripConfig.duration} onChange={e => setNewTripConfig({...newTripConfig, duration: Number(e.target.value)})} />
+                                <label className="block text-sm font-extrabold text-gray-900 mb-1">기간 (일)</label>
+                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="예: 3" value={newTripConfig.duration} onChange={e => setNewTripConfig({...newTripConfig, duration: Number(e.target.value)})} />
                             </div>
                             <div className="flex-1">
-                                <label className="block text-sm font-bold text-gray-700 mb-1">환율 (1단위당)</label>
-                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 37" value={newTripConfig.currencyRate} onChange={e => setNewTripConfig({...newTripConfig, currencyRate: Number(e.target.value)})} />
+                                <label className="block text-sm font-extrabold text-gray-900 mb-1">환율 (1단위당)</label>
+                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="예: 37" value={newTripConfig.currencyRate} onChange={e => setNewTripConfig({...newTripConfig, currencyRate: Number(e.target.value)})} />
                             </div>
                         </div>
                         <div className="pt-4 flex flex-col gap-3">
