@@ -22,10 +22,14 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'my-travel-planner';
 
-// --- Gemini API Helper (Improved Error Handling & Parsing) ---
+// --- Gemini API Helper (Key Replacement Required) ---
 const callGeminiAPI = async (prompt) => {
-  const apiKey = "AIzaSyA3Itdm5wzt7sm0fNeBxI5wkYjZmMn-WA0"; 
+  // ⚠️ 중요: 아래 따옴표("") 안에 새로 발급받은 API 키를 붙여넣으세요!
+  const apiKey = "AIzaSyBp0bO98unn9w8wVkUyE8nB50VLrckArgc"; 
+  
   try {
+    if (!apiKey) throw new Error("API 키가 입력되지 않았습니다. 코드에서 키를 설정해주세요.");
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
       {
@@ -48,7 +52,7 @@ const callGeminiAPI = async (prompt) => {
     
     if (!textResponse) throw new Error("No response from Gemini");
 
-    // Fix: Remove Markdown code blocks if present (```json ... ```)
+    // Markdown 코드 블록 제거 후 파싱
     textResponse = textResponse.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
 
     return JSON.parse(textResponse);
@@ -257,7 +261,10 @@ const TravelPlanner = () => {
             shareCode: shareCode, config: newTripConfig, days: generatedDays, preparation: initialPrep, createdAt: new Date().toISOString()
         });
         setCurrentTripId(docRef.id); setView('detail');
-    } catch (e) { showAlert("AI 생성 실패. 수동으로 진행합니다.", "error"); handleCreateTrip(); }
+    } catch (e) { 
+        showAlert(`AI 생성 실패: ${e.message}`, "error"); 
+        // handleCreateTrip(); // Don't fallback automatically on API error to let user retry
+    }
     finally { setIsAiLoading(false); setAiMessage(""); }
   };
 
@@ -269,11 +276,17 @@ const TravelPlanner = () => {
         const items = await callGeminiAPI(prompt);
         if(!Array.isArray(items)) throw new Error("Invalid");
         const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
+        
         const currentPrep = tripData.preparation || { schedule: [] };
         const currentSchedule = currentPrep.schedule || [];
         const updatedSchedule = [...currentSchedule, ...newItems];
+        
         await updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
-    } catch (e) { console.error(e); showAlert("추천 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
+        
+    } catch (e) { 
+        console.error(e); 
+        showAlert(`추천 실패: ${e.message}`, "error"); 
+    } finally { setIsAiLoading(false); setAiMessage(""); }
   };
 
   const handleAnalyzeExpenses = async () => {
