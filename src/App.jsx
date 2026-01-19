@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, ChevronRight, Settings, Plane, FileText, CreditCard, Sparkles, Loader2, Banknote, BarChart3, Printer, Users, LogOut, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, ChevronRight, Settings, Plane, FileText, CreditCard, Sparkles, Loader2, Banknote, BarChart3, Printer, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
@@ -22,14 +22,10 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'my-travel-planner';
 
-// --- Gemini API Helper (Key Replacement Required) ---
+// --- Gemini API Helper ---
 const callGeminiAPI = async (prompt) => {
-  // ⚠️ 중요: 아래 따옴표("") 안에 새로 발급받은 API 키를 붙여넣으세요!
-  const apiKey = "AIzaSyBp0bO98unn9w8wVkUyE8nB50VLrckArgc"; 
-  
+  const apiKey = "AIzaSyA3Itdm5wzt7sm0fNeBxI5wkYjZmMn-WA0"; 
   try {
-    if (!apiKey) throw new Error("API 키가 입력되지 않았습니다. 코드에서 키를 설정해주세요.");
-
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
       {
@@ -41,25 +37,34 @@ const callGeminiAPI = async (prompt) => {
         }),
       }
     );
-    
-    if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        throw new Error(`API Error ${response.status}: ${errorBody.error?.message || response.statusText}`);
-    }
-
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
-    let textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
+    const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!textResponse) throw new Error("No response from Gemini");
-
-    // Markdown 코드 블록 제거 후 파싱
-    textResponse = textResponse.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
-
     return JSON.parse(textResponse);
   } catch (error) {
     console.error("Gemini API Error:", error);
     throw error;
   }
+};
+
+// --- Categories Definition ---
+const CATEGORIES = [
+    { id: 'meal', label: '식사', icon: Utensils, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200' },
+    { id: 'coffee', label: '카페', icon: Coffee, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200' },
+    { id: 'activity', label: '관광', icon: Camera, color: 'text-blue-500', bg: 'bg-blue-50', border: 'border-blue-200' },
+    { id: 'transport', label: '이동', icon: Bus, color: 'text-indigo-500', bg: 'bg-indigo-50', border: 'border-indigo-200' },
+    { id: 'shopping', label: '쇼핑', icon: ShoppingBag, color: 'text-purple-500', bg: 'bg-purple-50', border: 'border-purple-200' },
+    { id: 'hotel', label: '숙소', icon: Hotel, color: 'text-rose-500', bg: 'bg-rose-50', border: 'border-rose-200' },
+    { id: 'flight', label: '항공', icon: Plane, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200' },
+    { id: 'money', label: '비용', icon: Wallet, color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' },
+    { id: 'etc', label: '기타', icon: MapPin, color: 'text-gray-500', bg: 'bg-gray-50', border: 'border-gray-200' },
+];
+
+const getCategoryIcon = (type) => {
+    const cat = CATEGORIES.find(c => c.id === type) || CATEGORIES.find(c => c.id === 'etc');
+    const Icon = cat.icon;
+    return <Icon size={16} className={cat.color} />;
 };
 
 // --- Common UI Component ---
@@ -263,7 +268,6 @@ const TravelPlanner = () => {
         setCurrentTripId(docRef.id); setView('detail');
     } catch (e) { 
         showAlert(`AI 생성 실패: ${e.message}`, "error"); 
-        // handleCreateTrip(); // Don't fallback automatically on API error to let user retry
     }
     finally { setIsAiLoading(false); setAiMessage(""); }
   };
@@ -455,7 +459,7 @@ const TravelPlanner = () => {
                          <div key={item.id} onClick={() => { setEditingItem({ dayId: 'preparation', ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
                             <div className="flex-1">
                                 <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
-                                    {item.type === 'flight' ? <Plane size={16} className="text-sky-500"/> : item.type === 'hotel' ? <Hotel size={16} className="text-indigo-500"/> : <FileText size={16} className="text-green-500"/>} {item.title}
+                                    {getCategoryIcon(item.type)} {item.title}
                                     {(item.cost > 0 || item.paymentMethod) && (
                                          <div className="text-xs text-gray-500 flex items-center gap-1.5 bg-gray-50 px-2 py-0.5 rounded">
                                             {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Sparkles size={12}/> : <CreditCard size={12}/>} 
@@ -489,7 +493,7 @@ const TravelPlanner = () => {
                         <div className="w-16 text-sm font-mono text-gray-500 font-medium">{item.time}</div>
                         <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
-                                {item.type === 'meal' ? <Utensils size={16} className="text-orange-500"/> : <MapPin size={16} className="text-blue-500"/>} {item.title}
+                                {getCategoryIcon(item.type)} {item.title}
                                 {(item.cost > 0 || item.paymentMethod) && (
                                     <div className="text-xs text-gray-500 flex items-center gap-1.5 bg-gray-50 px-2 py-0.5 rounded">
                                     {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Sparkles size={12}/> : <CreditCard size={12}/>} 
@@ -523,6 +527,24 @@ const TravelPlanner = () => {
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden animate-fade-in-up">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
                     <h3 className="font-bold text-lg text-gray-800 mb-4">{editingItem.dayId === 'preparation' ? '준비 항목' : '일정 상세'}</h3>
+                    
+                    {/* Category Selection */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 mb-2 block">카테고리 (아이콘)</label>
+                        <div className="flex flex-wrap gap-2">
+                            {CATEGORIES.map((cat) => (
+                                <button
+                                    key={cat.id}
+                                    onClick={() => setEditingItem({...editingItem, type: cat.id})}
+                                    className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all w-14 h-14 ${editingItem.type === cat.id ? `border-${cat.color.split('-')[1]}-500 ${cat.bg} ring-1 ring-${cat.color.split('-')[1]}-500` : 'border-gray-200 hover:bg-gray-50'}`}
+                                >
+                                    <cat.icon size={20} className={editingItem.type === cat.id ? cat.color : 'text-gray-400'} />
+                                    <span className={`text-[10px] mt-1 ${editingItem.type === cat.id ? 'font-bold text-gray-700' : 'text-gray-400'}`}>{cat.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     <div className="flex gap-4">
                         <input type="time" className="border border-gray-300 bg-white text-gray-900 rounded-lg p-2 w-1/3 outline-none focus:ring-2 focus:ring-blue-500" value={editingItem.time} onChange={e => setEditingItem({...editingItem, time: e.target.value})}/>
                         <input type="text" className="border border-gray-300 bg-white text-gray-900 rounded-lg p-2 w-2/3 outline-none focus:ring-2 focus:ring-blue-500" placeholder="항목명" value={editingItem.title} onChange={e => setEditingItem({...editingItem, title: e.target.value})}/>
