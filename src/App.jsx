@@ -22,7 +22,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'my-travel-planner';
 
-// --- Gemini API Helper ---
+// --- Gemini API Helper (Improved Error Handling & Parsing) ---
 const callGeminiAPI = async (prompt) => {
   const apiKey = "AIzaSyA3Itdm5wzt7sm0fNeBxI5wkYjZmMn-WA0"; 
   try {
@@ -37,10 +37,20 @@ const callGeminiAPI = async (prompt) => {
         }),
       }
     );
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    
+    if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(`API Error ${response.status}: ${errorBody.error?.message || response.statusText}`);
+    }
+
     const data = await response.json();
-    const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    let textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
     if (!textResponse) throw new Error("No response from Gemini");
+
+    // Fix: Remove Markdown code blocks if present (```json ... ```)
+    textResponse = textResponse.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+
     return JSON.parse(textResponse);
   } catch (error) {
     console.error("Gemini API Error:", error);
@@ -259,27 +269,30 @@ const TravelPlanner = () => {
         const items = await callGeminiAPI(prompt);
         if(!Array.isArray(items)) throw new Error("Invalid");
         const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
-        
         const currentPrep = tripData.preparation || { schedule: [] };
         const currentSchedule = currentPrep.schedule || [];
         const updatedSchedule = [...currentSchedule, ...newItems];
-        
         await updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
-        
     } catch (e) { console.error(e); showAlert("추천 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
   };
 
   const handleAnalyzeExpenses = async () => {
     setIsAiLoading(true); setAiMessage("지출 분석 중...");
-    let allItems = [];
-    tripData.preparation?.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: i.cost, period: '여행 전'}));
-    tripData.days?.forEach(d => d.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: Math.floor(i.cost * tripData.config.currencyRate), period: '여행 중'})));
-    if(allItems.length === 0) { setIsAiLoading(false); return showAlert("분석할 지출 내역이 없습니다.", "info"); }
-    const prompt = `Analyze expenses for ${tripData.config.country}. Data: ${JSON.stringify(allItems)}. Return JSON: { "totalCost": number, "categoryBreakdown": [{"name": string, "amount": number, "percentage": number}], "paymentMethodBreakdown": [{"name": string, "amount": number, "percentage": number}], "periodBreakdown": [{"name": string, "amount": number, "percentage": number}], "overallComment": string (Korean) }`;
     try {
+        let allItems = [];
+        tripData.preparation?.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: i.cost, period: '여행 전'}));
+        tripData.days?.forEach(d => d.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: Math.floor(i.cost * (tripData.config.currencyRate || 1)), period: '여행 중'})));
+        
+        if(allItems.length === 0) throw new Error("분석할 지출 데이터가 없습니다.");
+
+        const prompt = `Analyze expenses for ${tripData.config.country}. Data: ${JSON.stringify(allItems)}. Return JSON: { "totalCost": number, "categoryBreakdown": [{"name": string, "amount": number, "percentage": number}], "paymentMethodBreakdown": [{"name": string, "amount": number, "percentage": number}], "periodBreakdown": [{"name": string, "amount": number, "percentage": number}], "overallComment": string (Korean) }`;
         const result = await callGeminiAPI(prompt);
         if(result) { setAnalysisResult(result); setIsAnalysisOpen(true); }
-    } catch(e) { showAlert("분석 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
+    } catch(e) { 
+        showAlert(`분석 실패: ${e.message}`, "error"); 
+    } finally { 
+        setIsAiLoading(false); setAiMessage(""); 
+    }
   };
 
   const handleLocalHotelChange = (dayId, val) => setTripData(p => ({ ...p, days: p.days.map(d => d.id === dayId ? { ...d, hotel: val } : d) }));
