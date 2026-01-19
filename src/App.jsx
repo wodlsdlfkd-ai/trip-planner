@@ -260,7 +260,6 @@ const TravelPlanner = () => {
         if(!Array.isArray(items)) throw new Error("Invalid");
         const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
         
-        // BUG FIX: preparation이 없거나 schedule이 없는 경우 안전하게 처리
         const currentPrep = tripData.preparation || { schedule: [] };
         const currentSchedule = currentPrep.schedule || [];
         const updatedSchedule = [...currentSchedule, ...newItems];
@@ -421,7 +420,8 @@ const TravelPlanner = () => {
                     <span className="bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full">Day 0 (준비)</span>
                     <div className="flex gap-2">
                         <button onClick={handleAiRecommendPrep} className="text-xs bg-white text-indigo-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 border border-indigo-200 hover:bg-indigo-50"><Sparkles size={14}/> AI 추천</button>
-                        <button onClick={() => { setEditingItem({ dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
+                        {/* FIX: id: Date.now() 추가 */}
+                        <button onClick={() => { setEditingItem({ id: Date.now(), dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
                     </div>
                 </div>
                 <div className="divide-y divide-gray-100">
@@ -454,7 +454,8 @@ const TravelPlanner = () => {
                         <span className="text-gray-500 text-sm">{getFormattedDate(config.startDate, idx)}</span>
                         <input type="text" placeholder="숙소 입력" value={day.hotel} onChange={e => handleLocalHotelChange(day.id, e.target.value)} onBlur={handleHotelSave} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
                     </div>
-                    <button onClick={() => { setEditingItem({ dayId: day.id, time: '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }); setIsModalOpen(true); }} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
+                    {/* FIX: id: Date.now() 추가 */}
+                    <button onClick={() => { setEditingItem({ id: Date.now(), dayId: day.id, time: '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }); setIsModalOpen(true); }} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
                   </div>
                   <div className="divide-y divide-gray-100">
                     {day.schedule.map(item => (
