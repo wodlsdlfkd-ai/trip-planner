@@ -468,7 +468,7 @@ const TravelPlanner = () => {
                                          </div>
                                     )}
                                 </div>
-                                {item.memo && <div className="text-xs text-gray-400 mt-1 pl-6 line-clamp-1">{item.memo}</div>}
+                                {item.memo && <div className="text-xs text-gray-400 mt-1 pl-6 whitespace-pre-wrap">{item.memo}</div>}
                             </div>
                             <div className="text-right whitespace-nowrap">{item.cost > 0 ? <span className="font-bold text-gray-900">{formatCurrency(item.cost)}원</span> : <span className="text-xs text-gray-300">비용 입력</span>}</div>
                         </div>
@@ -502,7 +502,7 @@ const TravelPlanner = () => {
                                     </div>
                                 )}
                             </div>
-                            {item.memo && <div className="text-xs text-gray-400 mt-1 pl-6 line-clamp-1">{item.memo}</div>}
+                            {item.memo && <div className="text-xs text-gray-400 mt-1 pl-6 whitespace-pre-wrap">{item.memo}</div>}
                         </div>
                         <div className="text-right whitespace-nowrap">
                             {item.cost > 0 ? (
@@ -608,7 +608,7 @@ const TravelPlanner = () => {
                     </div>
                     <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
                         <h3 className="font-bold text-blue-800 mb-2 flex gap-2"><Sparkles size={18}/> AI 총평</h3>
-                        <p className="text-blue-900 leading-relaxed text-sm md:text-base">{analysisResult.overallComment}</p>
+                        <p className="text-blue-900 leading-relaxed text-sm md:text-base whitespace-pre-wrap">{analysisResult.overallComment}</p>
                     </div>
                     <div className="grid md:grid-cols-2 gap-8">
                         <div>
