@@ -48,7 +48,7 @@ const callGeminiAPI = async (prompt) => {
   }
 };
 
-// --- Common UI Component (Moved OUTSIDE to prevent re-renders) ---
+// --- Common UI Component ---
 const CommonUI = ({ children, isAiLoading, aiMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo }) => (
   <div className="min-h-screen bg-gray-50 text-gray-800 font-sans relative print:bg-white print:p-0">
     {isAiLoading && (
@@ -263,15 +263,22 @@ const TravelPlanner = () => {
   };
 
   const handleAiRecommendPrep = async () => {
+    if (!user || !currentTripId) return;
     setIsAiLoading(true); setAiMessage("준비물 분석 중...");
     const prompt = `Recommend 5 essential travel items for ${tripData.config.country}. JSON Array: [{"title": "Item", "memo": "Reason"}]`;
     try {
         const items = await callGeminiAPI(prompt);
         if(!Array.isArray(items)) throw new Error("Invalid");
         const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
-        const updatedSchedule = [...(tripData.preparation?.schedule || []), ...newItems];
+        
+        // Fix: Ensure we don't overwrite but append, and handle null preparation
+        const currentPrepSchedule = tripData.preparation?.schedule || [];
+        const updatedSchedule = [...currentPrepSchedule, ...newItems];
+        
+        // Direct update call
         await updateCurrentTrip({ preparation: { ...tripData.preparation, schedule: updatedSchedule } });
-    } catch (e) { showAlert("추천 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
+        
+    } catch (e) { console.error(e); showAlert("추천 실패", "error"); } finally { setIsAiLoading(false); setAiMessage(""); }
   };
 
   const handleAnalyzeExpenses = async () => {
@@ -294,24 +301,35 @@ const TravelPlanner = () => {
   const saveItem = () => {
     if (!editingItem || !tripData) return;
     const isPrep = editingItem.dayId === 'preparation';
+    
+    // Fix: Handle case where preparation might be undefined
+    if (isPrep && !tripData.preparation) {
+        tripData.preparation = { schedule: [] };
+    }
+
     const collection = isPrep ? tripData.preparation : tripData.days.find(d => d.id === editingItem.dayId);
+    if (!collection) return;
+
     let updatedSchedule = collection.schedule.map(i => i.id === editingItem.id ? editingItem : i);
     if (!collection.schedule.find(i => i.id === editingItem.id)) updatedSchedule.push(editingItem);
     if (!isPrep) updatedSchedule.sort((a,b) => a.time.localeCompare(b.time));
+
     const updatePayload = isPrep ? { preparation: { ...tripData.preparation, schedule: updatedSchedule } } 
         : { days: tripData.days.map(d => d.id === editingItem.dayId ? { ...d, schedule: updatedSchedule } : d) };
-    updateCurrentTrip(updatePayload); setIsModalOpen(false); setEditingItem(null);
+    
+    updateCurrentTrip(updatePayload);
+    setIsModalOpen(false); setEditingItem(null);
   };
 
   const deleteScheduleItem = (dayId, itemId) => {
     const isPrep = dayId === 'preparation';
-    const updatePayload = isPrep ? { preparation: { ...tripData.preparation, schedule: tripData.preparation.schedule.filter(i => i.id !== itemId) } }
+    const updatePayload = isPrep 
+        ? { preparation: { ...tripData.preparation, schedule: tripData.preparation.schedule.filter(i => i.id !== itemId) } }
         : { days: tripData.days.map(d => d.id === dayId ? { ...d, schedule: d.schedule.filter(i => i.id !== itemId) } : d) };
     updateCurrentTrip(updatePayload); setIsModalOpen(false);
   };
 
   // --- Render ---
-  // Pass props to CommonUI to allow it to render UI elements
   const commonUIProps = { isAiLoading, aiMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo };
 
   if (isLoginStep) {
@@ -336,11 +354,23 @@ const TravelPlanner = () => {
                 <div className="bg-white w-full max-w-md p-8 rounded-2xl shadow-lg">
                     <h2 className="text-xl font-bold mb-6 text-gray-800">새 여행 계획</h2>
                     <div className="space-y-4">
-                        <input type="text" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="국가 (예: 태국)" value={newTripConfig.country} onChange={e => setNewTripConfig({...newTripConfig, country: e.target.value})} />
-                        <input type="date" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" value={newTripConfig.startDate} onChange={e => setNewTripConfig({...newTripConfig, startDate: e.target.value})} />
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-1">여행 국가</label>
+                            <input type="text" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 태국" value={newTripConfig.country} onChange={e => setNewTripConfig({...newTripConfig, country: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-1">시작 날짜</label>
+                            <input type="date" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" value={newTripConfig.startDate} onChange={e => setNewTripConfig({...newTripConfig, startDate: e.target.value})} />
+                        </div>
                         <div className="flex gap-4">
-                            <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="기간 (일)" value={newTripConfig.duration} onChange={e => setNewTripConfig({...newTripConfig, duration: Number(e.target.value)})} />
-                            <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="환율" value={newTripConfig.currencyRate} onChange={e => setNewTripConfig({...newTripConfig, currencyRate: Number(e.target.value)})} />
+                            <div className="flex-1">
+                                <label className="block text-sm font-bold text-gray-700 mb-1">기간 (일)</label>
+                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 3" value={newTripConfig.duration} onChange={e => setNewTripConfig({...newTripConfig, duration: Number(e.target.value)})} />
+                            </div>
+                            <div className="flex-1">
+                                <label className="block text-sm font-bold text-gray-700 mb-1">환율 (1단위당)</label>
+                                <input type="number" className="w-full border border-gray-300 bg-white text-gray-900 p-3 rounded-lg outline-none focus:border-blue-500" placeholder="예: 37" value={newTripConfig.currencyRate} onChange={e => setNewTripConfig({...newTripConfig, currencyRate: Number(e.target.value)})} />
+                            </div>
                         </div>
                         <div className="pt-4 flex flex-col gap-3">
                             <button onClick={handleAiCreateTrip} className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold flex items-center justify-center gap-2 shadow-md"><Sparkles size={18}/> AI 자동 생성</button>
