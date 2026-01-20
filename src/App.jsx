@@ -80,8 +80,8 @@ const CommonUI = ({ children, isAiLoading, aiMessage, confirmDialog, setConfirmD
     )}
     
     {confirmDialog && (
-        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 animate-fade-in-up">
-            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full text-center">
+        <div className="fixed inset-0 bg-black/50 z-[70] overflow-y-auto flex items-center justify-center p-4 animate-fade-in-up">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full text-center relative">
                 <h3 className="font-bold text-lg mb-2 text-gray-800">확인</h3>
                 <p className="text-gray-600 mb-6 text-sm whitespace-pre-wrap">{confirmDialog.message}</p>
                 <div className="flex gap-2">
@@ -369,15 +369,17 @@ const TravelPlanner = () => {
 
   if (isLoginStep) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm text-center">
-            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"><Users className="text-blue-600 w-8 h-8" /></div>
-            <h1 className="text-2xl font-bold text-gray-800 mb-2">여행 공유 시작하기</h1>
-            <p className="text-gray-500 mb-6 text-sm">가족이나 친구와 함께 공유할<br/>고유 코드를 입력해주세요.</p>
-            <input type="text" value={inputShareCode} onChange={(e) => setInputShareCode(e.target.value)} placeholder="예: 우리가족여행2026" className="w-full border border-gray-300 bg-white text-gray-900 rounded-xl p-4 text-center text-lg font-bold mb-4 focus:ring-2 focus:ring-blue-500 outline-none uppercase" />
-            <button onClick={handleLogin} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg">입장하기</button>
+      <div className="fixed inset-0 bg-gradient-to-br from-blue-500 to-indigo-600 overflow-y-auto">
+        <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm text-center">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"><Users className="text-blue-600 w-8 h-8" /></div>
+                <h1 className="text-2xl font-bold text-gray-800 mb-2">여행 공유 시작하기</h1>
+                <p className="text-gray-500 mb-6 text-sm">가족이나 친구와 함께 공유할<br/>고유 코드를 입력해주세요.</p>
+                <input type="text" value={inputShareCode} onChange={(e) => setInputShareCode(e.target.value)} placeholder="예: 우리가족여행2026" className="w-full border border-gray-300 bg-white text-gray-900 rounded-xl p-4 text-center text-lg font-bold mb-4 focus:ring-2 focus:ring-blue-500 outline-none uppercase" />
+                <button onClick={handleLogin} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg">입장하기</button>
+            </div>
+            {alertInfo && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm flex items-center gap-2 z-[80]"><AlertCircle size={16} /> {alertInfo.message}<button onClick={() => setAlertInfo(null)} className="ml-2"><X size={14}/></button></div>}
         </div>
-        {alertInfo && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm flex items-center gap-2"><AlertCircle size={16} /> {alertInfo.message}<button onClick={() => setAlertInfo(null)} className="ml-2"><X size={14}/></button></div>}
       </div>
     );
   }
@@ -524,8 +526,8 @@ const TravelPlanner = () => {
         </main>
 
         {isModalOpen && editingItem && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden animate-fade-in-up">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto flex items-center justify-center p-4 print:hidden animate-fade-in-up">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4 my-8 relative">
                     <h3 className="font-bold text-lg text-gray-800 mb-4">{editingItem.dayId === 'preparation' ? '준비 항목' : '일정 상세'}</h3>
                     
                     {/* Category Selection */}
@@ -578,8 +580,8 @@ const TravelPlanner = () => {
         )}
 
         {isConfigModalOpen && editingConfig && (
-             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden animate-fade-in-up">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+             <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto flex items-center justify-center p-4 print:hidden animate-fade-in-up">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4 my-8 relative">
                     <h3 className="font-bold text-lg">설정 수정</h3>
                     <input type="text" className="w-full border border-gray-300 bg-white text-gray-900 p-2 rounded outline-none focus:ring-2 focus:ring-blue-500" value={editingConfig.country} onChange={e => setEditingConfig({...editingConfig, country: e.target.value})}/>
                     <input type="date" className="w-full border border-gray-300 bg-white text-gray-900 p-2 rounded outline-none focus:ring-2 focus:ring-blue-500" value={editingConfig.startDate} onChange={e => setEditingConfig({...editingConfig, startDate: e.target.value})}/>
