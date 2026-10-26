@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, ChevronRight, Settings, Plane, FileText, CreditCard, Sparkles, Loader2, Banknote, BarChart3, Printer, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus } from 'lucide-react';
+import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, Settings, Plane, CreditCard, Download, Loader2, Banknote, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
@@ -24,32 +24,6 @@ const appId = 'my-travel-planner';
 // Restore viewing first. Firestore also denies every client write.
 const IS_READ_ONLY = true;
 
-// --- Gemini API Helper ---
-const callGeminiAPI = async (prompt) => {
-  const apiKey = "AIzaSyA3Itdm5wzt7sm0fNeBxI5wkYjZmMn-WA0"; 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        }),
-      }
-    );
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
-    const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textResponse) throw new Error("No response from Gemini");
-    return JSON.parse(textResponse);
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw error;
-  }
-};
-
 // --- Categories Definition ---
 const CATEGORIES = [
     { id: 'meal', label: '식사', icon: Utensils, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200' },
@@ -70,13 +44,13 @@ const getCategoryIcon = (type) => {
 };
 
 // --- Common UI Component ---
-const CommonUI = ({ children, isAiLoading, aiMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo }) => (
+const CommonUI = ({ children, isBusy, busyMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo }) => (
   <div className="min-h-screen bg-gray-50 text-gray-800 font-sans relative print:bg-white print:p-0">
-    {isAiLoading && (
+    {isBusy && (
         <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center backdrop-blur-sm print:hidden">
             <div className="bg-white p-6 rounded-xl flex flex-col items-center shadow-2xl">
                 <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-3"/>
-                <p className="font-medium">{aiMessage}</p>
+                <p className="font-medium">{busyMessage}</p>
             </div>
         </div>
     )}
@@ -129,11 +103,9 @@ const TravelPlanner = () => {
   const [editingItem, setEditingItem] = useState(null);
   const [editingConfig, setEditingConfig] = useState(null);
 
-  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState(null);
 
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiMessage, setAiMessage] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("");
   const [alertInfo, setAlertInfo] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -246,7 +218,7 @@ const TravelPlanner = () => {
     if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다. 기존 자료는 변경되지 않습니다.');
     if (!user || !shareCode) return;
     if (!newTripConfig.country) return showAlert("여행 국가를 입력해주세요.", "error");
-    setIsAiLoading(true); setAiMessage("여행 일정을 생성 중입니다...");
+    setIsBusy(true); setBusyMessage("여행 일정을 생성 중입니다...");
     const initialDays = Array.from({ length: newTripConfig.duration }, (_, i) => ({
       id: Date.now() + i, dayNum: i + 1, hotel: '',
       schedule: [
@@ -262,7 +234,7 @@ const TravelPlanner = () => {
       });
       setCurrentTripId(docRef.id); setView('detail');
     } catch (e) { console.error('Error creating trip:', e); showAlert(`여행 생성 실패: ${e.code || 'unknown'} — ${e.message}`, "error"); }
-    finally { setIsAiLoading(false); setAiMessage(""); }
+    finally { setIsBusy(false); setBusyMessage(""); }
   };
 
   const handleDeleteTripClick = (e, tripId) => {
@@ -290,70 +262,16 @@ const TravelPlanner = () => {
     }
   };
 
-  const handleAiCreateTrip = async () => {
-    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다.');
-    if (!user) return;
-    if (!newTripConfig.country) return showAlert("국가를 입력해주세요.", "error");
-    setIsAiLoading(true); setAiMessage(`${newTripConfig.country} 일정 생성 중...`);
-    const prompt = `Plan a ${newTripConfig.duration}-day travel itinerary for ${newTripConfig.country}. Return JSON: { "days": [ { "schedule": [ { "time": "09:00", "title": "Activity", "type": "activity", "memo": "Tip", "cost": 0 } ] } ] }. Include meals.`;
+  const handleDownloadExcel = async () => {
+    if (!tripData || isBusy) return;
+    setIsBusy(true); setBusyMessage('엑셀 파일을 만드는 중입니다...');
     try {
-        const aiData = await callGeminiAPI(prompt);
-        if (!aiData?.days) throw new Error("Invalid Response");
-        const generatedDays = aiData.days.map((dayData, index) => ({
-            id: Date.now() + index, dayNum: index + 1, hotel: '',
-            schedule: dayData.schedule.map((item, i) => ({ ...item, id: `d${index}-${i}`, cost: 0 }))
-        }));
-        while(generatedDays.length < newTripConfig.duration) { const i = generatedDays.length; generatedDays.push({ id: Date.now()+i, dayNum: i+1, hotel: '', schedule: [] }); }
-        const initialPrep = { schedule: [{ id: 'p-1', time: '-', title: '항공권', type: 'flight', cost: 0, memo: '' }] };
-        const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), {
-            shareCode: shareCode, config: newTripConfig, days: generatedDays, preparation: initialPrep, createdAt: new Date().toISOString()
-        });
-        setCurrentTripId(docRef.id); setView('detail');
-    } catch (e) { 
-        showAlert(`AI 생성 실패: ${e.message}`, "error"); 
-    }
-    finally { setIsAiLoading(false); setAiMessage(""); }
-  };
-
-  const handleAiRecommendPrep = async () => {
-    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다.');
-    if (!user || !currentTripId) return;
-    setIsAiLoading(true); setAiMessage("준비물 분석 중...");
-    const prompt = `Recommend 5 essential travel items for ${tripData.config.country}. JSON Array: [{"title": "Item", "memo": "Reason"}]`;
-    try {
-        const items = await callGeminiAPI(prompt);
-        if(!Array.isArray(items)) throw new Error("Invalid");
-        const newItems = items.map((it, i) => ({ id: Date.now()+i, time: '-', title: it.title, type: 'activity', cost: 0, memo: it.memo }));
-        
-        const currentPrep = tripData.preparation || { schedule: [] };
-        const currentSchedule = currentPrep.schedule || [];
-        const updatedSchedule = [...currentSchedule, ...newItems];
-        
-        await updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
-        
-    } catch (e) { 
-        console.error(e); 
-        showAlert(`추천 실패: ${e.message}`, "error"); 
-    } finally { setIsAiLoading(false); setAiMessage(""); }
-  };
-
-  const handleAnalyzeExpenses = async () => {
-    setIsAiLoading(true); setAiMessage("지출 분석 중...");
-    try {
-        let allItems = [];
-        tripData.preparation?.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: i.cost, period: '여행 전'}));
-        tripData.days?.forEach(d => d.schedule?.forEach(i => i.cost > 0 && allItems.push({...i, costKRW: Math.floor(i.cost * (tripData.config.currencyRate || 1)), period: '여행 중'})));
-        
-        if(allItems.length === 0) throw new Error("분석할 지출 데이터가 없습니다.");
-
-        const prompt = `Analyze expenses for ${tripData.config.country}. Data: ${JSON.stringify(allItems)}. Return JSON: { "totalCost": number, "categoryBreakdown": [{"name": string, "amount": number, "percentage": number}], "paymentMethodBreakdown": [{"name": string, "amount": number, "percentage": number}], "periodBreakdown": [{"name": string, "amount": number, "percentage": number}], "overallComment": string (Korean) }`;
-        const result = await callGeminiAPI(prompt);
-        if(result) { setAnalysisResult(result); setIsAnalysisOpen(true); }
-    } catch(e) { 
-        showAlert(`분석 실패: ${e.message}`, "error"); 
-    } finally { 
-        setIsAiLoading(false); setAiMessage(""); 
-    }
+      const { downloadTripExcel } = await import('./exportTrip.js');
+      await downloadTripExcel(tripData);
+    } catch (error) {
+      console.error('Excel download failed:', error);
+      showAlert('엑셀 다운로드 실패: ' + error.message, 'error');
+    } finally { setIsBusy(false); setBusyMessage(''); }
   };
 
   const handleLocalHotelChange = (dayId, val) => setTripData(p => ({ ...p, days: p.days.map(d => d.id === dayId ? { ...d, hotel: val } : d) }));
@@ -409,7 +327,7 @@ const TravelPlanner = () => {
   };
 
   // --- Render ---
-  const commonUIProps = { isAiLoading, aiMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo };
+  const commonUIProps = { isBusy, busyMessage, confirmDialog, setConfirmDialog, alertInfo, setAlertInfo };
 
   if (isLoginStep) {
     return (
@@ -455,10 +373,9 @@ const TravelPlanner = () => {
                             </div>
                         </div>
                         <div className="pt-4 flex flex-col gap-3">
-                            <button onClick={handleAiCreateTrip} className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold flex items-center justify-center gap-2 shadow-md"><Sparkles size={18}/> AI 자동 생성</button>
                             <div className="flex gap-3">
                                 <button onClick={() => setView('list')} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600 hover:bg-gray-200">취소</button>
-                                <button onClick={handleCreateTrip} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-sm">수동 생성</button>
+                                <button onClick={handleCreateTrip} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-sm">여행 만들기</button>
                             </div>
                         </div>
                     </div>
@@ -496,7 +413,6 @@ const TravelPlanner = () => {
                 <div className="bg-indigo-50 p-4 border-b border-indigo-100 flex justify-between items-center">
                     <span className="bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full">Day 0 (준비)</span>
                     <div className="flex gap-2">
-                        <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={handleAiRecommendPrep} className="text-xs bg-white text-indigo-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 border border-indigo-200 hover:bg-indigo-50"><Sparkles size={14}/> AI 추천</button>
                         {/* FIX: id: Date.now() 추가 */}
                         <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setEditingItem({ id: Date.now(), dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
                     </div>
@@ -509,7 +425,7 @@ const TravelPlanner = () => {
                                     {getCategoryIcon(item.type)} {item.title}
                                     {(item.cost > 0 || item.paymentMethod) && (
                                          <div className="text-xs text-gray-500 flex items-center gap-1.5 bg-gray-50 px-2 py-0.5 rounded">
-                                            {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Sparkles size={12}/> : <CreditCard size={12}/>} 
+                                            {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Wallet size={12}/> : <CreditCard size={12}/>} 
                                             <span className="font-medium">{item.paymentMethod === 'cash' ? '현금' : item.paymentMethod === 'other' ? '기타' : '카드'}</span>
                                             {item.paymentDetail && <span className="text-gray-400">| {item.paymentDetail}</span>}
                                          </div>
@@ -543,7 +459,7 @@ const TravelPlanner = () => {
                                 {getCategoryIcon(item.type)} {item.title}
                                 {(item.cost > 0 || item.paymentMethod) && (
                                     <div className="text-xs text-gray-500 flex items-center gap-1.5 bg-gray-50 px-2 py-0.5 rounded">
-                                    {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Sparkles size={12}/> : <CreditCard size={12}/>} 
+                                    {item.paymentMethod === 'cash' ? <Banknote size={12}/> : item.paymentMethod === 'other' ? <Wallet size={12}/> : <CreditCard size={12}/>} 
                                     <span className="font-medium">{item.paymentMethod === 'cash' ? '현금' : item.paymentMethod === 'other' ? '기타' : '카드'}</span>
                                     {item.paymentDetail && <span className="text-gray-400">| {item.paymentDetail}</span>}
                                     </div>
@@ -565,8 +481,8 @@ const TravelPlanner = () => {
                 </div>
             ))}
           </div>
-          <button disabled={IS_READ_ONLY} title="현재는 기존 자료 열람만 가능합니다." onClick={handleAnalyzeExpenses} className="w-full mt-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 mb-8 hover:shadow-xl hover:scale-[1.01] transition-all">
-            <BarChart3 size={24} /> AI 지출 분석 & 보고서
+          <button disabled={isBusy} onClick={handleDownloadExcel} className="w-full mt-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 mb-8 hover:shadow-xl hover:scale-[1.01] transition-all">
+            <Download size={24} /> 엑셀 다운로드
           </button>
         </main>
 
@@ -639,58 +555,6 @@ const TravelPlanner = () => {
              </div>
         )}
 
-        {isAnalysisOpen && analysisResult && (
-            <div className="fixed inset-0 bg-white z-[100] overflow-y-auto p-8 print:p-0 animate-fade-in-up">
-                <div className="max-w-4xl mx-auto space-y-8">
-                    <div className="flex justify-between print:hidden">
-                        <h2 className="text-2xl font-bold flex gap-2 text-gray-800"><BarChart3 className="text-blue-600"/> 지출 분석</h2>
-                        <div className="flex gap-2">
-                            <button onClick={() => window.print()} className="px-4 py-2 bg-gray-900 text-white rounded-lg flex gap-2 hover:bg-black transition"><Printer size={18}/> PDF/인쇄</button>
-                            <button onClick={() => setIsAnalysisOpen(false)} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition text-gray-700">닫기</button>
-                        </div>
-                    </div>
-                    <div className="border-b pb-4">
-                        <h1 className="text-3xl font-bold mb-2 text-gray-900">{config.country} 여행 지출 보고서</h1>
-                        <p className="text-gray-500 font-medium">총 지출: {formatCurrency(analysisResult.totalCost)}원</p>
-                    </div>
-                    <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
-                        <h3 className="font-bold text-blue-800 mb-2 flex gap-2"><Sparkles size={18}/> AI 총평</h3>
-                        <p className="text-blue-900 leading-relaxed text-sm md:text-base whitespace-pre-wrap">{analysisResult.overallComment}</p>
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-8">
-                        <div>
-                            <h3 className="font-bold mb-4 text-gray-800 flex items-center gap-2"><Utensils size={18}/> 항목별 지출</h3>
-                            <div className="space-y-3">
-                                {analysisResult.categoryBreakdown?.map((c,i) => (
-                                    <div key={i} className="flex items-center gap-4">
-                                        <div className="w-20 text-sm font-medium text-gray-600">{c.name}</div>
-                                        <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500" style={{width: `${c.percentage}%`}}></div></div>
-                                        <div className="text-sm font-bold w-24 text-right">{formatCurrency(c.amount)}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                         <div>
-                            <h3 className="font-bold mb-4 text-gray-800 flex items-center gap-2"><CreditCard size={18}/> 결제 수단별</h3>
-                            <div className="bg-gray-50 p-4 rounded-xl">
-                                {analysisResult.paymentMethodBreakdown?.map((m,i) => (
-                                    <div key={i} className="flex justify-between mb-3 last:mb-0 text-sm">
-                                        <span className="flex items-center gap-2 text-gray-600">
-                                            <div className={`w-3 h-3 rounded-full ${i===0?'bg-purple-500':i===1?'bg-pink-500':'bg-gray-400'}`}></div>
-                                            {m.name}
-                                        </span>
-                                        <span className="font-bold">{formatCurrency(m.amount)} <span className="text-gray-400 font-normal">({m.percentage}%)</span></span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="text-center text-xs text-gray-400 mt-12">
-                        Generated by AI Trip Manager • {new Date().toLocaleDateString()}
-                    </div>
-                </div>
-            </div>
-        )}
       </CommonUI>
     );
   }
