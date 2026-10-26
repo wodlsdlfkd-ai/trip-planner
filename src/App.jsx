@@ -3,8 +3,8 @@ import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utens
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, query, where, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 
 // --- Firebase Config ---
 const firebaseConfig = {
@@ -107,6 +107,7 @@ const CommonUI = ({ children, isAiLoading, aiMessage, confirmDialog, setConfirmD
 // --- Main Component ---
 const TravelPlanner = () => {
   const [user, setUser] = useState(null);
+  const [authError, setAuthError] = useState(null);
   
   const [shareCode, setShareCode] = useState(() => localStorage.getItem('trip_share_code') || '');
   const [inputShareCode, setInputShareCode] = useState('');
@@ -114,7 +115,11 @@ const TravelPlanner = () => {
 
   const [view, setView] = useState('list');
   const [currentTripId, setCurrentTripId] = useState(null);
-  const [trips, setTrips] = useState([]);
+  const [tripList, setTripList] = useState(null);
+  const trips = tripList?.shareCode === shareCode && tripList?.uid === user?.uid
+    ? tripList.trips : [];
+  const listError = authError || (tripList?.shareCode === shareCode && tripList?.uid === user?.uid ? tripList.error : null);
+  const isTripsLoading = !listError && (!user || tripList?.shareCode !== shareCode || tripList?.uid !== user.uid);
   
   const [tripData, setTripData] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -138,23 +143,35 @@ const TravelPlanner = () => {
   });
 
   useEffect(() => {
-    const initAuth = async () => { await signInAnonymously(auth); };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    let active = true;
+    const handleAuthError = (error) => {
+      console.error('Firebase authentication failed:', error);
+      if (active) setAuthError(error);
+    };
+    const unsubscribe = onAuthStateChanged(auth, (authenticatedUser) => {
+      if (!active) return;
+      setUser(authenticatedUser);
+      if (authenticatedUser) setAuthError(null);
+    }, handleAuthError);
+    signInAnonymously(auth).catch(handleAuthError);
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   useEffect(() => {
     if (!user || !shareCode) return;
     const tripsRef = collection(db, 'artifacts', appId, 'public', 'data', 'trips');
-    const unsubscribe = onSnapshot(tripsRef, (snapshot) => {
+    let active = true;
+    const unsubscribe = onSnapshot(query(tripsRef, where('shareCode', '==', shareCode)), (snapshot) => {
+      if (!active) return;
       const loadedTrips = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(trip => trip.shareCode === shareCode);
+        .map(doc => ({ ...doc.data(), id: doc.id }));
       loadedTrips.sort((a, b) => new Date(b.config.startDate) - new Date(a.config.startDate));
-      setTrips(loadedTrips);
-    }, (error) => console.error("Error fetching trips:", error));
-    return () => unsubscribe();
+      setTripList({ shareCode, uid: user.uid, trips: loadedTrips, error: null });
+    }, (error) => {
+      console.error('Error fetching trips:', error);
+      if (active) setTripList({ shareCode, uid: user.uid, trips: [], error });
+    });
+    return () => { active = false; unsubscribe(); };
   }, [user, shareCode]);
 
   useEffect(() => {
@@ -202,6 +219,9 @@ const TravelPlanner = () => {
             setInputShareCode('');
             setIsLoginStep(true);
             setView('list');
+            setCurrentTripId(null);
+            setTripData(null);
+            setTripList(null);
             setConfirmDialog(null);
         }
     });
@@ -225,7 +245,7 @@ const TravelPlanner = () => {
         shareCode: shareCode, config: newTripConfig, days: initialDays, preparation: initialPrep, createdAt: new Date().toISOString()
       });
       setCurrentTripId(docRef.id); setView('detail');
-    } catch (e) { showAlert("오류가 발생했습니다.", "error"); } 
+    } catch (e) { console.error('Error creating trip:', e); showAlert(`여행 생성 실패: ${e.code || 'unknown'} — ${e.message}`, "error"); }
     finally { setIsAiLoading(false); setAiMessage(""); }
   };
 
@@ -238,14 +258,18 @@ const TravelPlanner = () => {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', tripId));
                 if (currentTripId === tripId) { setView('list'); setCurrentTripId(null); }
                 setConfirmDialog(null);
-            } catch (error) { showAlert("삭제 실패", "error"); }
+            } catch (error) { console.error('Error deleting trip:', error); showAlert(`삭제 실패: ${error.code || 'unknown'} — ${error.message}`, "error"); }
         }
     });
   };
 
   const updateCurrentTrip = async (updatedData) => {
     if (!user || !currentTripId) return;
-    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId), updatedData); } catch (error) {}
+    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId), updatedData); }
+    catch (error) {
+      console.error('Error saving trip:', error);
+      showAlert(`저장 실패: ${error.code || 'unknown'} — ${error.message}`, 'error');
+    }
   };
 
   const handleAiCreateTrip = async () => {
@@ -670,7 +694,20 @@ const TravelPlanner = () => {
           </header>
 
           <div className="grid gap-4">
-            {trips.length === 0 ? (
+            {listError ? (
+                <div role="alert" className="bg-white p-10 rounded-xl border border-dashed border-gray-300 text-center text-gray-600">
+                    <AlertCircle className="w-12 h-12 mx-auto mb-2 text-red-400" />
+                    <p className="font-bold text-gray-800">여행 목록을 불러오지 못했습니다.</p>
+                    <p className="mt-2 text-sm">{authError ? 'Firebase 로그인에 실패했습니다.' : '데이터가 없는 것이 아니라 조회에 실패한 상태입니다.'}</p>
+                    <p className="mt-2 text-xs break-words">{listError.code || 'unknown'}: {listError.message}</p>
+                    <button onClick={() => window.location.reload()} className="mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">다시 시도</button>
+                </div>
+            ) : isTripsLoading ? (
+                <div role="status" className="bg-white p-10 rounded-xl border border-dashed border-gray-300 text-center text-gray-400">
+                    <Loader2 className="w-12 h-12 mx-auto mb-2 animate-spin" />
+                    <p>여행 목록을 불러오는 중입니다.</p>
+                </div>
+            ) : trips.length === 0 ? (
                 <div className="bg-white p-10 rounded-xl border border-dashed border-gray-300 text-center text-gray-400">
                     <MapPin className="w-12 h-12 mx-auto mb-2 opacity-20" />
                     <p>공유된 여행이 없습니다.<br/>새로운 여행을 만들어보세요!</p>

@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Recovery scope: the existing travel collection only.
+    // Anonymous authentication does NOT provide per-group authorization.
+    match /artifacts/my-travel-planner/public/data/trips/{tripId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
