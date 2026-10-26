@@ -1,10 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Recovery scope: the existing travel collection only.
-    // Anonymous authentication does NOT provide per-group authorization.
+    // Template only: replace this value in Firebase Console before publishing.
+    // Keep the real recovery code out of the public repository.
     match /artifacts/my-travel-planner/public/data/trips/{tripId} {
-      allow read, write: if request.auth != null;
+      allow list: if request.auth != null
+        && resource.data.shareCode == '__SET_RECOVERY_CODE_IN_FIREBASE_CONSOLE__';
+      allow get, create, update, delete: if false;
     }
   }
 }

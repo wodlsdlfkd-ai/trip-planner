@@ -21,6 +21,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'my-travel-planner';
+// Restore viewing first. Firestore also denies every client write.
+const IS_READ_ONLY = true;
 
 // --- Gemini API Helper ---
 const callGeminiAPI = async (prompt) => {
@@ -175,17 +177,30 @@ const TravelPlanner = () => {
   }, [user, shareCode]);
 
   useEffect(() => {
-    if (!user || !currentTripId) return;
-    const tripRef = doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId);
-    const unsubscribe = onSnapshot(tripRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+    if (!user || !currentTripId || !shareCode) return;
+    // The recovery rules allow code-filtered queries, never direct document gets.
+    const tripsRef = collection(db, 'artifacts', appId, 'public', 'data', 'trips');
+    let active = true;
+    const unsubscribe = onSnapshot(query(tripsRef, where('shareCode', '==', shareCode)), (snapshot) => {
+      if (!active) return;
+      const currentDocument = snapshot.docs.find(item => item.id === currentTripId);
+      if (currentDocument) {
+        const data = currentDocument.data();
         if (!data.preparation) data.preparation = { schedule: [] };
         setTripData(data);
+      } else {
+        setTripData(null);
+        setView('list');
       }
-    }, (error) => console.error("Error fetching detail:", error));
-    return () => unsubscribe();
-  }, [user, currentTripId]);
+    }, (error) => {
+      console.error('Error fetching detail:', error);
+      if (!active) return;
+      setTripData(null);
+      setView('list');
+      setAlertInfo({ message: `상세 조회 실패: ${error.code || 'unknown'} — ${error.message}`, type: 'error' });
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [user, currentTripId, shareCode]);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('ko-KR').format(amount);
   const getFormattedDate = (startDateStr, dayOffset) => {
@@ -228,6 +243,7 @@ const TravelPlanner = () => {
   };
 
   const handleCreateTrip = async () => {
+    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다. 기존 자료는 변경되지 않습니다.');
     if (!user || !shareCode) return;
     if (!newTripConfig.country) return showAlert("여행 국가를 입력해주세요.", "error");
     setIsAiLoading(true); setAiMessage("여행 일정을 생성 중입니다...");
@@ -251,6 +267,7 @@ const TravelPlanner = () => {
 
   const handleDeleteTripClick = (e, tripId) => {
     e.stopPropagation();
+    if (IS_READ_ONLY) return showAlert('자료 열람 모드에서는 삭제할 수 없습니다.');
     setConfirmDialog({
         message: "정말 삭제하시겠습니까?\n복구할 수 없습니다.",
         onConfirm: async () => {
@@ -264,6 +281,7 @@ const TravelPlanner = () => {
   };
 
   const updateCurrentTrip = async (updatedData) => {
+    if (IS_READ_ONLY) return showAlert('자료 열람 모드에서는 수정할 수 없습니다.');
     if (!user || !currentTripId) return;
     try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId), updatedData); }
     catch (error) {
@@ -273,6 +291,7 @@ const TravelPlanner = () => {
   };
 
   const handleAiCreateTrip = async () => {
+    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다.');
     if (!user) return;
     if (!newTripConfig.country) return showAlert("국가를 입력해주세요.", "error");
     setIsAiLoading(true); setAiMessage(`${newTripConfig.country} 일정 생성 중...`);
@@ -297,6 +316,7 @@ const TravelPlanner = () => {
   };
 
   const handleAiRecommendPrep = async () => {
+    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다.');
     if (!user || !currentTripId) return;
     setIsAiLoading(true); setAiMessage("준비물 분석 중...");
     const prompt = `Recommend 5 essential travel items for ${tripData.config.country}. JSON Array: [{"title": "Item", "memo": "Reason"}]`;
@@ -461,6 +481,7 @@ const TravelPlanner = () => {
           </div>
         </header>
         <main className="max-w-4xl mx-auto p-4 space-y-6 print:hidden">
+          {IS_READ_ONLY && <p className="text-sm text-gray-500">자료 열람 모드 · 기존 일정과 비용을 확인할 수 있습니다.</p>}
           <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-200 relative">
              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 items-center">
                  <span className="flex items-center gap-1"><Calendar size={14}/> {config.startDate}</span>
@@ -468,21 +489,21 @@ const TravelPlanner = () => {
                  <span className="flex items-center gap-1 text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded"><Calculator size={14}/> 환율 {config.currencyRate}원</span>
                  <span className="flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100"><Wallet size={14}/> {formatCurrency(totalCost)}원</span>
              </div>
-             <button onClick={() => { setEditingConfig(config); setIsConfigModalOpen(true); }} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
+             <button disabled={IS_READ_ONLY} title={IS_READ_ONLY ? '자료 열람 모드' : '설정 수정'} onClick={() => { setEditingConfig(config); setIsConfigModalOpen(true); }} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
           </div>
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm border border-indigo-100 overflow-hidden ring-1 ring-indigo-50">
                 <div className="bg-indigo-50 p-4 border-b border-indigo-100 flex justify-between items-center">
                     <span className="bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full">Day 0 (준비)</span>
                     <div className="flex gap-2">
-                        <button onClick={handleAiRecommendPrep} className="text-xs bg-white text-indigo-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 border border-indigo-200 hover:bg-indigo-50"><Sparkles size={14}/> AI 추천</button>
+                        <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={handleAiRecommendPrep} className="text-xs bg-white text-indigo-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 border border-indigo-200 hover:bg-indigo-50"><Sparkles size={14}/> AI 추천</button>
                         {/* FIX: id: Date.now() 추가 */}
-                        <button onClick={() => { setEditingItem({ id: Date.now(), dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
+                        <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setEditingItem({ id: Date.now(), dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
                     </div>
                 </div>
                 <div className="divide-y divide-gray-100">
                     {preparation?.schedule?.map(item => (
-                         <div key={item.id} onClick={() => { setEditingItem({ dayId: 'preparation', ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
+                         <div key={item.id} onClick={() => { if (IS_READ_ONLY) return; setEditingItem({ dayId: 'preparation', ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
                             <div className="flex-1">
                                 <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
                                     {getCategoryIcon(item.type)} {item.title}
@@ -508,14 +529,14 @@ const TravelPlanner = () => {
                     <div className="flex items-center gap-2">
                         <span className="bg-blue-100 text-blue-800 text-sm font-bold px-3 py-1 rounded-full">Day {day.dayNum}</span>
                         <span className="text-gray-500 text-sm">{getFormattedDate(config.startDate, idx)}</span>
-                        <input type="text" placeholder="숙소 입력" value={day.hotel} onChange={e => handleLocalHotelChange(day.id, e.target.value)} onBlur={handleHotelSave} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
+                        <input type="text" placeholder="숙소 입력" readOnly={IS_READ_ONLY} value={day.hotel} onChange={e => handleLocalHotelChange(day.id, e.target.value)} onBlur={IS_READ_ONLY ? undefined : handleHotelSave} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
                     </div>
                     {/* FIX: id: Date.now() 추가 */}
-                    <button onClick={() => { setEditingItem({ id: Date.now(), dayId: day.id, time: '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }); setIsModalOpen(true); }} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
+                    <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setEditingItem({ id: Date.now(), dayId: day.id, time: '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }); setIsModalOpen(true); }} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
                   </div>
                   <div className="divide-y divide-gray-100">
                     {day.schedule.map(item => (
-                      <div key={item.id} onClick={() => { setEditingItem({ dayId: day.id, ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
+                      <div key={item.id} onClick={() => { if (IS_READ_ONLY) return; setEditingItem({ dayId: day.id, ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
                         <div className="w-16 text-sm font-mono text-gray-500 font-medium">{item.time}</div>
                         <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
@@ -544,7 +565,7 @@ const TravelPlanner = () => {
                 </div>
             ))}
           </div>
-          <button onClick={handleAnalyzeExpenses} className="w-full mt-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 mb-8 hover:shadow-xl hover:scale-[1.01] transition-all">
+          <button disabled={IS_READ_ONLY} title="현재는 기존 자료 열람만 가능합니다." onClick={handleAnalyzeExpenses} className="w-full mt-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 mb-8 hover:shadow-xl hover:scale-[1.01] transition-all">
             <BarChart3 size={24} /> AI 지출 분석 & 보고서
           </button>
         </main>
@@ -688,11 +709,12 @@ const TravelPlanner = () => {
                     <button onClick={handleLogoutClick} className="text-xs text-gray-400 underline flex items-center gap-1 hover:text-red-500"><LogOut size={10}/> 변경</button>
                 </div>
             </div>
-            <button onClick={() => { setNewTripConfig({ country: '', startDate: new Date().toISOString().split('T')[0], duration: 3, currencyRate: 1 }); setView('new'); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2">
+            <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setNewTripConfig({ country: '', startDate: new Date().toISOString().split('T')[0], duration: 3, currencyRate: 1 }); setView('new'); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2">
               <Plus size={18} /> 새 여행
             </button>
           </header>
 
+          {IS_READ_ONLY && <p className="text-sm text-gray-500">자료 열람 모드 · 기존 일정과 비용을 확인할 수 있습니다.</p>}
           <div className="grid gap-4">
             {listError ? (
                 <div role="alert" className="bg-white p-10 rounded-xl border border-dashed border-gray-300 text-center text-gray-600">
@@ -713,7 +735,7 @@ const TravelPlanner = () => {
                     <p>공유된 여행이 없습니다.<br/>새로운 여행을 만들어보세요!</p>
                 </div>
             ) : trips.map(trip => (
-                <div key={trip.id} onClick={() => { setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
+                <div key={trip.id} onClick={() => { setTripData(trip); setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
                     <div className="flex justify-between items-start">
                         <div>
                             <h3 className="text-xl font-bold text-gray-800">{trip.config.country}</h3>
@@ -723,7 +745,7 @@ const TravelPlanner = () => {
                             <span className="text-lg font-bold text-blue-600">{formatCurrency(getTripTotalCost(trip))} 원</span>
                         </div>
                     </div>
-                    <button onClick={(e) => handleDeleteTripClick(e, trip.id)} className="absolute bottom-4 right-4 text-gray-300 hover:text-red-500 p-2 z-10 transition-colors"><Trash2 size={16}/></button>
+                    <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={(e) => handleDeleteTripClick(e, trip.id)} className="absolute bottom-4 right-4 text-gray-300 hover:text-red-500 p-2 z-10 transition-colors"><Trash2 size={16}/></button>
                 </div>
             ))}
           </div>
