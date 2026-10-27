@@ -33,7 +33,7 @@ export async function createTripWorkbook(trip) {
   report.rows.forEach((item, index) => {
     const r = index + 5;
     detail.addRow([item.period, item.day, item.date, item.time, item.hotel, item.category, item.title, item.payment, item.paymentDetail, item.cost, item.unit, item.rate,
-      formula(`IF(A${r}="준비",J${r},ROUNDDOWN(J${r}*L${r},0))`, item.krw), item.memo]);
+      formula(`IF(A${r}="준비",J${r},INT(J${r}*L${r}))`, item.krw), item.memo]);
     const lineCount = Math.max(1, ...[item.title, item.hotel, item.memo, item.paymentDetail].map(text => text.split('\n').reduce((count, line) => count + Math.max(1, Math.ceil(Array.from(line).length / 30)), 0)));
     detail.getRow(r).height = 20 * lineCount + 8;
   });
@@ -51,7 +51,7 @@ export async function createTripWorkbook(trip) {
   const metrics = [
     ['준비 비용 (원)', formula(`SUMIF(${range('A')},"준비",${range('J')})`, report.preparation)],
     ['여행 중 금액 (현지화)', formula(`SUMIF(${range('A')},"여행 중",${range('J')})`, report.local)],
-    ['여행 중 환산액 (원)', formula('ROUNDDOWN(B9*$E$5,0)', report.converted)],
+    ['여행 중 환산액 (원)', formula('INT(B9*$E$5)', report.converted)],
     ['전체 합계 (원)', formula('SUM(B8,B10)', report.total)],
     ['환산 조정액 (원)', formula(`B11-SUM(${range('M')})`, report.adjustment)],
   ];

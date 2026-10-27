@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { requestTripAction } from './tripApi.js';
 import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, Settings, Plane, CreditCard, Download, Loader2, Banknote, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, where, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, query, where, onSnapshot } from 'firebase/firestore';
 
 // --- Firebase Config ---
 const firebaseConfig = {
@@ -21,8 +22,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'my-travel-planner';
-// Restore viewing first. Firestore also denies every client write.
-const IS_READ_ONLY = true;
+// Direct Firestore writes stay denied; edits go through the authenticated server API.
 
 // --- Categories Definition ---
 const CATEGORIES = [
@@ -87,6 +87,12 @@ const TravelPlanner = () => {
   
   const [shareCode, setShareCode] = useState(() => localStorage.getItem('trip_share_code') || '');
   const [inputShareCode, setInputShareCode] = useState('');
+  const [editingAccess, setEditingAccess] = useState(null);
+  const IS_READ_ONLY = !editingAccess?.enabled || editingAccess.shareCode !== shareCode || editingAccess.uid !== user?.uid;
+  const mutationInFlight = useRef(false);
+  const newTripRequest = useRef(null);
+  const editingTarget = useRef(null);
+  const [hotelDraft, setHotelDraft] = useState(null);
   const [isLoginStep, setIsLoginStep] = useState(!localStorage.getItem('trip_share_code'));
 
   const [view, setView] = useState('list');
@@ -111,7 +117,7 @@ const TravelPlanner = () => {
 
   const [newTripConfig, setNewTripConfig] = useState({
     country: '',
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: new Date().toLocaleDateString('sv-SE'),
     duration: 3,
     currencyRate: 1
   });
@@ -130,6 +136,18 @@ const TravelPlanner = () => {
     signInAnonymously(auth).catch(handleAuthError);
     return () => { active = false; unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    if (!user || !shareCode) return;
+    let active = true;
+    requestTripAction(user, shareCode, { action: 'capabilities' }).then(() => {
+      if (active) setEditingAccess({ uid: user.uid, shareCode, enabled: true });
+    }).catch(error => {
+      if (active) setEditingAccess({ uid: user.uid, shareCode, enabled: false });
+      if (error.code !== 'editing-unavailable') console.error('Editing access check failed:', error.message);
+    });
+    return () => { active = false; };
+  }, [user, shareCode]);
 
   useEffect(() => {
     if (!user || !shareCode) return;
@@ -160,7 +178,7 @@ const TravelPlanner = () => {
         const data = currentDocument.data();
         if (!data.preparation) data.preparation = { schedule: [] };
         setTripData(data);
-      } else {
+      } else if (!snapshot.metadata.fromCache) {
         setTripData(null);
         setView('list');
       }
@@ -209,61 +227,66 @@ const TravelPlanner = () => {
             setCurrentTripId(null);
             setTripData(null);
             setTripList(null);
+            setEditingAccess(null);
+            setHotelDraft(null);
+            setIsModalOpen(false);
+            setIsConfigModalOpen(false);
+            editingTarget.current = null;
+            newTripRequest.current = null;
             setConfirmDialog(null);
         }
     });
   };
 
+  const versionOf = data => data?.updatedAt || data?.createdAt || null;
   const handleCreateTrip = async () => {
-    if (IS_READ_ONLY) return showAlert('현재는 자료 열람 모드입니다. 기존 자료는 변경되지 않습니다.');
-    if (!user || !shareCode) return;
-    if (!newTripConfig.country) return showAlert("여행 국가를 입력해주세요.", "error");
-    setIsBusy(true); setBusyMessage("여행 일정을 생성 중입니다...");
-    const initialDays = Array.from({ length: newTripConfig.duration }, (_, i) => ({
-      id: Date.now() + i, dayNum: i + 1, hotel: '',
-      schedule: [
-        { id: `d${i}-1`, time: '08:00', title: '아침 식사', type: 'meal', cost: 0, memo: '' },
-        { id: `d${i}-2`, time: '12:00', title: '점심 식사', type: 'meal', cost: 0, memo: '' },
-        { id: `d${i}-3`, time: '18:00', title: '저녁 식사', type: 'meal', cost: 0, memo: '' },
-      ]
-    }));
-    const initialPrep = { schedule: [{ id: 'p-1', time: '-', title: '항공권 예매', type: 'flight', cost: 0, memo: '' }] };
-    try {
-      const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), {
-        shareCode: shareCode, config: newTripConfig, days: initialDays, preparation: initialPrep, createdAt: new Date().toISOString()
-      });
-      setCurrentTripId(docRef.id); setView('detail');
-    } catch (e) { console.error('Error creating trip:', e); showAlert(`여행 생성 실패: ${e.code || 'unknown'} — ${e.message}`, "error"); }
-    finally { setIsBusy(false); setBusyMessage(""); }
-  };
-
-  const handleDeleteTripClick = (e, tripId) => {
-    e.stopPropagation();
-    if (IS_READ_ONLY) return showAlert('자료 열람 모드에서는 삭제할 수 없습니다.');
-    setConfirmDialog({
-        message: "정말 삭제하시겠습니까?\n복구할 수 없습니다.",
-        onConfirm: async () => {
-            try {
-                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', tripId));
-                if (currentTripId === tripId) { setView('list'); setCurrentTripId(null); }
-                setConfirmDialog(null);
-            } catch (error) { console.error('Error deleting trip:', error); showAlert(`삭제 실패: ${error.code || 'unknown'} — ${error.message}`, "error"); }
-        }
-    });
-  };
-
-  const updateCurrentTrip = async (updatedData) => {
-    if (IS_READ_ONLY) return showAlert('자료 열람 모드에서는 수정할 수 없습니다.');
-    if (!user || !currentTripId) return;
-    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', currentTripId), updatedData); }
-    catch (error) {
-      console.error('Error saving trip:', error);
-      showAlert(`저장 실패: ${error.code || 'unknown'} — ${error.message}`, 'error');
+    if (IS_READ_ONLY || mutationInFlight.current) return;
+    if (!newTripConfig.country.trim() || !Number.isInteger(newTripConfig.duration) || newTripConfig.duration < 1 || newTripConfig.duration > 90 || !Number.isFinite(newTripConfig.currencyRate) || newTripConfig.currencyRate <= 0 || !newTripConfig.startDate) {
+      return showAlert('여행명·시작일·기간(1~90일)·양수 환율을 확인해 주세요.', 'error');
     }
+    mutationInFlight.current = true;
+    setIsBusy(true); setBusyMessage('여행 일정을 생성 중입니다...');
+    const signature = JSON.stringify(newTripConfig);
+    if (newTripRequest.current?.signature !== signature) newTripRequest.current = { id: crypto.randomUUID(), signature };
+    try {
+      const result = await requestTripAction(user, shareCode, { action: 'create', config: newTripConfig, requestId: newTripRequest.current.id });
+      setTripData(null); setCurrentTripId(result.tripId); setView('detail');
+      newTripRequest.current = null;
+    } catch (error) { console.error('Trip creation failed:', error.message); showAlert(error.message, 'error'); }
+    finally { mutationInFlight.current = false; setIsBusy(false); setBusyMessage(''); }
+  };
+
+  const handleDeleteTripClick = e => { e.stopPropagation(); showAlert('여행 삭제는 아직 지원하지 않습니다.'); };
+
+  const saveMutation = async (action, payload, target) => {
+    if (IS_READ_ONLY || mutationInFlight.current) return false;
+    if (!target || target.tripId !== currentTripId) { showAlert('여행을 다시 열어 주세요.', 'error'); return false; }
+    mutationInFlight.current = true;
+    setIsBusy(true); setBusyMessage('변경 내용을 저장 중입니다...');
+    try {
+      await requestTripAction(user, shareCode, { action, ...payload, tripId: target.tripId, expectedVersion: target.version });
+      return true;
+    } catch (error) { console.error('Trip save failed:', error.message); showAlert(error.message, 'error'); return false; }
+    finally { mutationInFlight.current = false; setIsBusy(false); setBusyMessage(''); }
+  };
+
+  const openItem = (dayId, item, index = 0) => {
+    if (IS_READ_ONLY || mutationInFlight.current) return;
+    editingTarget.current = { tripId: currentTripId, version: versionOf(tripData) };
+    const identity = item ? (item.id ?? ('legacy-' + dayId + '-' + index)) : crypto.randomUUID();
+    setEditingItem({ ...(item || { time: dayId === 'preparation' ? '-' : '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }), id: identity, dayId, isNew: !item });
+    setIsModalOpen(true);
+  };
+
+  const openConfig = () => {
+    if (IS_READ_ONLY || mutationInFlight.current) return;
+    editingTarget.current = { tripId: currentTripId, version: versionOf(tripData) };
+    setEditingConfig({ ...tripData.config }); setIsConfigModalOpen(true);
   };
 
   const handleDownloadExcel = async () => {
-    if (!tripData || isBusy) return;
+    if (!tripData || isBusy || mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setIsBusy(true); setBusyMessage('엑셀 파일을 만드는 중입니다...');
     try {
       const { downloadTripExcel } = await import('./exportTrip.js');
@@ -271,59 +294,25 @@ const TravelPlanner = () => {
     } catch (error) {
       console.error('Excel download failed:', error);
       showAlert('엑셀 다운로드 실패: ' + error.message, 'error');
-    } finally { setIsBusy(false); setBusyMessage(''); }
+    } finally { mutationInFlight.current = false; setIsBusy(false); setBusyMessage(''); }
   };
 
-  const handleLocalHotelChange = (dayId, val) => setTripData(p => ({ ...p, days: p.days.map(d => d.id === dayId ? { ...d, hotel: val } : d) }));
-  const handleHotelSave = () => updateCurrentTrip({ days: tripData.days });
-  const handleSaveConfig = () => { updateCurrentTrip({ config: editingConfig }); setIsConfigModalOpen(false); };
-  
-  const saveItem = () => {
-    if (!editingItem || !tripData) return;
-    
-    // 1. Preparation Item Logic
-    if (editingItem.dayId === 'preparation') {
-        const currentPrep = tripData.preparation || { schedule: [] };
-        const currentSchedule = currentPrep.schedule || [];
-        
-        let updatedSchedule;
-        if (currentSchedule.find(i => i.id === editingItem.id)) {
-            updatedSchedule = currentSchedule.map(i => i.id === editingItem.id ? editingItem : i);
-        } else {
-            updatedSchedule = [...currentSchedule, editingItem];
-        }
-        
-        updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
-    } 
-    // 2. Daily Schedule Logic
-    else {
-        const day = tripData.days.find(d => d.id === editingItem.dayId);
-        if (!day) return;
-
-        let updatedSchedule = day.schedule.map(i => i.id === editingItem.id ? editingItem : i);
-        if (!day.schedule.find(i => i.id === editingItem.id)) {
-            updatedSchedule.push(editingItem);
-            updatedSchedule.sort((a,b) => a.time.localeCompare(b.time));
-        }
-        
-        const updatedDays = tripData.days.map(d => d.id === editingItem.dayId ? { ...d, schedule: updatedSchedule } : d);
-        updateCurrentTrip({ days: updatedDays });
-    }
-    
-    setIsModalOpen(false); 
-    setEditingItem(null);
+  const beginHotelEdit = day => {
+    if (IS_READ_ONLY || mutationInFlight.current) return;
+    setHotelDraft(previous => previous?.tripId === currentTripId && previous.dayId === day.id ? previous : { tripId: currentTripId, dayId: day.id, value: day.hotel || '', original: day.hotel || '', version: versionOf(tripData) });
   };
-
-  const deleteScheduleItem = (dayId, itemId) => {
-    if (dayId === 'preparation') {
-        const currentPrep = tripData.preparation || { schedule: [] };
-        const updatedSchedule = (currentPrep.schedule || []).filter(i => i.id !== itemId);
-        updateCurrentTrip({ preparation: { ...currentPrep, schedule: updatedSchedule } });
-    } else {
-        const updatedDays = tripData.days.map(d => d.id === dayId ? { ...d, schedule: d.schedule.filter(i => i.id !== itemId) } : d);
-        updateCurrentTrip({ days: updatedDays });
-    }
-    setIsModalOpen(false);
+  const handleHotelSave = async dayId => {
+    if (!hotelDraft || hotelDraft.tripId !== currentTripId || hotelDraft.dayId !== dayId || hotelDraft.value === hotelDraft.original) return;
+    const saved = await saveMutation('saveHotel', { dayId, hotel: hotelDraft.value }, { tripId: hotelDraft.tripId, version: hotelDraft.version });
+    if (saved) setHotelDraft(null);
+  };
+  const handleSaveConfig = async () => {
+    if (await saveMutation('saveConfig', { config: editingConfig }, editingTarget.current)) setIsConfigModalOpen(false);
+  };
+  const saveItem = async () => {
+    if (!editingItem) return;
+    const saved = await saveMutation('saveItem', { dayId: editingItem.dayId, itemId: editingItem.id, isNew: editingItem.isNew, item: editingItem }, editingTarget.current);
+    if (saved) { setIsModalOpen(false); setEditingItem(null); }
   };
 
   // --- Render ---
@@ -385,6 +374,10 @@ const TravelPlanner = () => {
       );
   }
 
+  if (view === 'detail' && !tripData) {
+    return <CommonUI {...commonUIProps}><div role="status" className="p-10 text-center"><Loader2 className="mx-auto animate-spin" />여행을 불러오는 중입니다.<button onClick={() => setView('list')} className="block mx-auto mt-4 text-blue-600">목록</button></div></CommonUI>;
+  }
+
   if (view === 'detail' && tripData) {
     const { config, days, preparation } = tripData;
     const totalCost = getTripTotalCost(tripData);
@@ -406,7 +399,7 @@ const TravelPlanner = () => {
                  <span className="flex items-center gap-1 text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded"><Calculator size={14}/> 환율 {config.currencyRate}원</span>
                  <span className="flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100"><Wallet size={14}/> {formatCurrency(totalCost)}원</span>
              </div>
-             <button disabled={IS_READ_ONLY} title={IS_READ_ONLY ? '자료 열람 모드' : '설정 수정'} onClick={() => { setEditingConfig(config); setIsConfigModalOpen(true); }} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
+             <button disabled={IS_READ_ONLY} title={IS_READ_ONLY ? '자료 열람 모드' : '설정 수정'} onClick={openConfig} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
           </div>
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm border border-indigo-100 overflow-hidden ring-1 ring-indigo-50">
@@ -414,12 +407,12 @@ const TravelPlanner = () => {
                     <span className="bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full">Day 0 (준비)</span>
                     <div className="flex gap-2">
                         {/* FIX: id: Date.now() 추가 */}
-                        <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setEditingItem({ id: Date.now(), dayId: 'preparation', time: '-', title: '', type: 'activity', cost: 0 }); setIsModalOpen(true); }} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
+                        <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem('preparation')} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
                     </div>
                 </div>
                 <div className="divide-y divide-gray-100">
-                    {preparation?.schedule?.map(item => (
-                         <div key={item.id} onClick={() => { if (IS_READ_ONLY) return; setEditingItem({ dayId: 'preparation', ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
+                    {preparation?.schedule?.map((item, index) => (
+                         <div key={item.id ?? ('legacy-preparation-' + index)} onClick={() => openItem('preparation', item, index)} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
                             <div className="flex-1">
                                 <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
                                     {getCategoryIcon(item.type)} {item.title}
@@ -445,14 +438,14 @@ const TravelPlanner = () => {
                     <div className="flex items-center gap-2">
                         <span className="bg-blue-100 text-blue-800 text-sm font-bold px-3 py-1 rounded-full">Day {day.dayNum}</span>
                         <span className="text-gray-500 text-sm">{getFormattedDate(config.startDate, idx)}</span>
-                        <input type="text" placeholder="숙소 입력" readOnly={IS_READ_ONLY} value={day.hotel} onChange={e => handleLocalHotelChange(day.id, e.target.value)} onBlur={IS_READ_ONLY ? undefined : handleHotelSave} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
+                        <input type="text" placeholder="숙소 입력" readOnly={IS_READ_ONLY} value={hotelDraft?.tripId === currentTripId && hotelDraft.dayId === day.id ? hotelDraft.value : (day.hotel || '')} onFocus={() => beginHotelEdit(day)} onChange={e => setHotelDraft(previous => previous ? { ...previous, value: e.target.value } : previous)} onBlur={() => handleHotelSave(day.id)} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
                     </div>
                     {/* FIX: id: Date.now() 추가 */}
-                    <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setEditingItem({ id: Date.now(), dayId: day.id, time: '10:00', title: '', type: 'activity', cost: 0, paymentMethod: 'card' }); setIsModalOpen(true); }} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
+                    <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem(day.id)} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
                   </div>
                   <div className="divide-y divide-gray-100">
-                    {day.schedule.map(item => (
-                      <div key={item.id} onClick={() => { if (IS_READ_ONLY) return; setEditingItem({ dayId: day.id, ...item }); setIsModalOpen(true); }} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
+                    {day.schedule.map((item, index) => (
+                      <div key={item.id ?? ('legacy-' + day.id + '-' + index)} onClick={() => openItem(day.id, item, index)} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
                         <div className="w-16 text-sm font-mono text-gray-500 font-medium">{item.time}</div>
                         <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
@@ -530,7 +523,7 @@ const TravelPlanner = () => {
                     </div>
                     <textarea className="w-full border border-gray-300 bg-white text-gray-900 rounded-lg p-2 resize-none outline-none focus:ring-2 focus:ring-blue-500" rows="2" placeholder="메모" value={editingItem.memo || ''} onChange={e => setEditingItem({...editingItem, memo: e.target.value})}/>
                     <div className="flex justify-between pt-4">
-                        <button onClick={() => deleteScheduleItem(editingItem.dayId, editingItem.id)} className="text-red-500 p-2 hover:bg-red-50 rounded-lg transition"><Trash2/></button>
+                        <button disabled title="항목 삭제는 아직 지원하지 않습니다." className="text-red-500 p-2 hover:bg-red-50 rounded-lg transition"><Trash2/></button>
                         <div className="flex gap-2">
                             <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition">취소</button>
                             <button onClick={saveItem} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-md">저장</button>
@@ -573,7 +566,7 @@ const TravelPlanner = () => {
                     <button onClick={handleLogoutClick} className="text-xs text-gray-400 underline flex items-center gap-1 hover:text-red-500"><LogOut size={10}/> 변경</button>
                 </div>
             </div>
-            <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={() => { setNewTripConfig({ country: '', startDate: new Date().toISOString().split('T')[0], duration: 3, currencyRate: 1 }); setView('new'); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2">
+            <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => { newTripRequest.current = null; setNewTripConfig({ country: '', startDate: new Date().toLocaleDateString('sv-SE'), duration: 3, currencyRate: 1 }); setView('new'); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2">
               <Plus size={18} /> 새 여행
             </button>
           </header>
@@ -599,7 +592,7 @@ const TravelPlanner = () => {
                     <p>공유된 여행이 없습니다.<br/>새로운 여행을 만들어보세요!</p>
                 </div>
             ) : trips.map(trip => (
-                <div key={trip.id} onClick={() => { setTripData(trip); setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
+                <div key={trip.id} onClick={() => { setHotelDraft(null); setTripData(trip); setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
                     <div className="flex justify-between items-start">
                         <div>
                             <h3 className="text-xl font-bold text-gray-800">{trip.config.country}</h3>
@@ -609,7 +602,7 @@ const TravelPlanner = () => {
                             <span className="text-lg font-bold text-blue-600">{formatCurrency(getTripTotalCost(trip))} 원</span>
                         </div>
                     </div>
-                    <button disabled={IS_READ_ONLY} title="자료 열람 모드" onClick={(e) => handleDeleteTripClick(e, trip.id)} className="absolute bottom-4 right-4 text-gray-300 hover:text-red-500 p-2 z-10 transition-colors"><Trash2 size={16}/></button>
+                    <button disabled title="여행 삭제는 아직 지원하지 않습니다." onClick={handleDeleteTripClick} className="absolute bottom-4 right-4 text-gray-300 hover:text-red-500 p-2 z-10 transition-colors"><Trash2 size={16}/></button>
                 </div>
             ))}
           </div>

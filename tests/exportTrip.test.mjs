@@ -46,3 +46,10 @@ test('empty schedule exports a valid workbook with zero total', async () => {
   assert.ok((await workbook.xlsx.writeBuffer()).byteLength > 0);
   assert.ok(filename.startsWith('여행_'));
 });
+
+test('legacy negative refund values use the same floor calculation as the app', async () => {
+  const input = trip(); input.days[0].schedule[0].cost = -1;
+  const { workbook, report } = await createTripWorkbook(input);
+  assert.equal(report.rows[1].krw, -2);
+  assert.equal(workbook.getWorksheet('일정·지출').getCell('M6').value.formula, 'IF(A6="준비",J6,INT(J6*L6))');
+});
