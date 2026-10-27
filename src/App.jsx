@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { requestTripAction } from './tripApi.js';
-import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, Settings, Plane, CreditCard, Download, Loader2, Banknote, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus } from 'lucide-react';
+import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, Settings, Plane, CreditCard, Download, Loader2, Banknote, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus, Pencil } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
@@ -104,6 +104,7 @@ const TravelPlanner = () => {
   const isTripsLoading = !listError && (!user || tripList?.shareCode !== shareCode || tripList?.uid !== user.uid);
   
   const [tripData, setTripData] = useState(null);
+  const [selectedDay, setSelectedDay] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -250,7 +251,7 @@ const TravelPlanner = () => {
     if (newTripRequest.current?.signature !== signature) newTripRequest.current = { id: crypto.randomUUID(), signature };
     try {
       const result = await requestTripAction(user, shareCode, { action: 'create', config: newTripConfig, requestId: newTripRequest.current.id });
-      setTripData(null); setCurrentTripId(result.tripId); setView('detail');
+      setSelectedDay(null); setTripData(null); setCurrentTripId(result.tripId); setView('detail');
       newTripRequest.current = null;
     } catch (error) { console.error('Trip creation failed:', error.message); showAlert(error.message, 'error'); }
     finally { mutationInFlight.current = false; setIsBusy(false); setBusyMessage(''); }
@@ -381,6 +382,8 @@ const TravelPlanner = () => {
   if (view === 'detail' && tripData) {
     const { config, days, preparation } = tripData;
     const totalCost = getTripTotalCost(tripData);
+    const activeDay = selectedDay === 'preparation' ? 'preparation' : (days.find(day => day.id === selectedDay)?.id ?? days[0]?.id ?? 'preparation');
+    const sumSchedule = schedule => (schedule || []).reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
     return (
       <CommonUI {...commonUIProps}>
         <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-10 print:hidden">
@@ -400,19 +403,26 @@ const TravelPlanner = () => {
                  <span className="flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100"><Wallet size={14}/> {formatCurrency(totalCost)}원</span>
              </div>
              <button disabled={IS_READ_ONLY} title={IS_READ_ONLY ? '자료 열람 모드' : '설정 수정'} onClick={openConfig} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
+             <button disabled={isBusy} onClick={handleDownloadExcel} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"><Download size={16}/> 엑셀 다운로드</button>
           </div>
+          <nav aria-label="여행 날짜 선택" className="flex gap-2 overflow-x-auto pb-2">
+            <button type="button" disabled={isBusy} aria-pressed={activeDay === 'preparation'} onClick={() => setSelectedDay('preparation')} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${activeDay === 'preparation' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300'}`}>준비</button>
+            {days.map(day => <button type="button" key={day.id} disabled={isBusy} aria-pressed={activeDay === day.id} onClick={() => setSelectedDay(day.id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${activeDay === day.id ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 border border-gray-300'}`}>Day {day.dayNum}</button>)}
+          </nav>
           <div className="space-y-6">
+            {activeDay === 'preparation' && (
             <div className="bg-white rounded-xl shadow-sm border border-indigo-100 overflow-hidden ring-1 ring-indigo-50">
                 <div className="bg-indigo-50 p-4 border-b border-indigo-100 flex justify-between items-center">
                     <span className="bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full">Day 0 (준비)</span>
+                    <span className="text-sm font-bold text-gray-700">준비 비용 {formatCurrency(sumSchedule(preparation?.schedule))}원</span>
                     <div className="flex gap-2">
                         {/* FIX: id: Date.now() 추가 */}
-                        <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem('preparation')} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 추가</button>
+                        <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem('preparation')} className="text-sm text-indigo-700 font-bold flex items-center gap-1 hover:text-indigo-800"><Plus size={16}/> 준비 항목 추가</button>
                     </div>
                 </div>
                 <div className="divide-y divide-gray-100">
                     {preparation?.schedule?.map((item, index) => (
-                         <div key={item.id ?? ('legacy-preparation-' + index)} onClick={() => openItem('preparation', item, index)} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
+                         <div key={item.id ?? ('legacy-preparation-' + index)} role={!IS_READ_ONLY ? 'button' : undefined} tabIndex={!IS_READ_ONLY ? 0 : undefined} aria-label={!IS_READ_ONLY ? `${item.title} 수정` : undefined} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openItem('preparation', item, index); } }} onClick={() => openItem('preparation', item, index)} className="p-4 hover:bg-indigo-50 cursor-pointer flex items-center gap-4">
                             <div className="flex-1">
                                 <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
                                     {getCategoryIcon(item.type)} {item.title}
@@ -426,13 +436,14 @@ const TravelPlanner = () => {
                                 </div>
                                 {item.memo && <div className="text-xs text-gray-400 mt-1 pl-6 whitespace-pre-wrap">{item.memo}</div>}
                             </div>
-                            <div className="text-right whitespace-nowrap">{item.cost > 0 ? <span className="font-bold text-gray-900">{formatCurrency(item.cost)}원</span> : <span className="text-xs text-gray-300">비용 입력</span>}</div>
+                            <div className="text-right whitespace-nowrap">{item.cost > 0 ? <span className="font-bold text-gray-900">{formatCurrency(item.cost)}원</span> : <span className="text-xs text-gray-600">비용 입력</span>}</div>{!IS_READ_ONLY && <Pencil aria-hidden="true" size={15} className="text-gray-500 shrink-0"/>}
                         </div>
                     ))}
                     {(!preparation?.schedule || preparation.schedule.length === 0) && <div className="p-8 text-center text-gray-400 text-sm">준비 내역을 기록하세요.</div>}
                 </div>
             </div>
-            {days.map((day, idx) => (
+            )}
+            {days.map((day, idx) => activeDay === day.id && (
                 <div key={day.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div className="bg-gray-50 p-4 border-b border-gray-200 flex flex-wrap justify-between items-center gap-2">
                     <div className="flex items-center gap-2">
@@ -440,12 +451,13 @@ const TravelPlanner = () => {
                         <span className="text-gray-500 text-sm">{getFormattedDate(config.startDate, idx)}</span>
                         <input type="text" placeholder="숙소 입력" readOnly={IS_READ_ONLY} value={hotelDraft?.tripId === currentTripId && hotelDraft.dayId === day.id ? hotelDraft.value : (day.hotel || '')} onFocus={() => beginHotelEdit(day)} onChange={e => setHotelDraft(previous => previous ? { ...previous, value: e.target.value } : previous)} onBlur={() => handleHotelSave(day.id)} className="bg-white border border-gray-200 text-gray-900 rounded px-2 py-1 text-sm w-32 md:w-48 ml-2 focus:ring-2 focus:ring-blue-500 outline-none"/>
                     </div>
+                    <span className="text-sm font-bold text-gray-700">지출 {formatCurrency(Math.floor(sumSchedule(day.schedule) * config.currencyRate))}원</span>
                     {/* FIX: id: Date.now() 추가 */}
-                    <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem(day.id)} className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 추가</button>
+                    <button disabled={IS_READ_ONLY || isBusy} title={IS_READ_ONLY ? '자료 열람 모드' : undefined} onClick={() => openItem(day.id)} className="text-sm text-blue-700 font-bold flex items-center gap-1 hover:text-blue-800"><Plus size={16}/> 일정 추가</button>
                   </div>
                   <div className="divide-y divide-gray-100">
                     {day.schedule.map((item, index) => (
-                      <div key={item.id ?? ('legacy-' + day.id + '-' + index)} onClick={() => openItem(day.id, item, index)} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
+                      <div key={item.id ?? ('legacy-' + day.id + '-' + index)} role={!IS_READ_ONLY ? 'button' : undefined} tabIndex={!IS_READ_ONLY ? 0 : undefined} aria-label={!IS_READ_ONLY ? `${item.title} 수정` : undefined} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openItem(day.id, item, index); } }} onClick={() => openItem(day.id, item, index)} className="p-4 hover:bg-blue-50 cursor-pointer flex items-center gap-4">
                         <div className="w-16 text-sm font-mono text-gray-500 font-medium">{item.time}</div>
                         <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 font-medium text-gray-800">
@@ -466,14 +478,17 @@ const TravelPlanner = () => {
                                     <span className="font-bold text-gray-900">{formatCurrency(item.cost)} <span className="text-xs font-normal text-gray-500">Local</span></span>
                                     <span className="text-xs text-blue-600 font-medium">≈ {formatCurrency(Math.floor(item.cost * config.currencyRate))} 원</span>
                                 </div>
-                            ) : <span className="text-xs text-gray-300">비용 입력</span>}
+                            ) : <span className="text-xs text-gray-600">비용 입력</span>}
                         </div>
+                        {!IS_READ_ONLY && <Pencil aria-hidden="true" size={15} className="text-gray-500 shrink-0"/>}
                       </div>
                     ))}
+                    {day.schedule.length === 0 && <div className="p-8 text-center text-sm text-gray-600">아직 등록된 일정이 없습니다.{!IS_READ_ONLY && <button disabled={isBusy} onClick={() => openItem(day.id)} className="block mx-auto mt-3 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white"><Plus size={16} className="inline mr-1"/>일정 추가</button>}</div>}
                   </div>
                 </div>
             ))}
           </div>
+          <p className="text-xs text-gray-600">일별 지출은 해당 날짜의 현지 비용 합계에 환율을 적용해 원 미만을 버립니다. 전체 합계와 원 단위 차이가 날 수 있습니다.</p>
           <button disabled={isBusy} onClick={handleDownloadExcel} className="w-full mt-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 mb-8 hover:shadow-xl hover:scale-[1.01] transition-all">
             <Download size={24} /> 엑셀 다운로드
           </button>
@@ -592,7 +607,7 @@ const TravelPlanner = () => {
                     <p>공유된 여행이 없습니다.<br/>새로운 여행을 만들어보세요!</p>
                 </div>
             ) : trips.map(trip => (
-                <div key={trip.id} onClick={() => { setHotelDraft(null); setTripData(trip); setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
+                <div key={trip.id} onClick={() => { setSelectedDay(null); setHotelDraft(null); setTripData(trip); setCurrentTripId(trip.id); setView('detail'); }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md cursor-pointer relative group transition-all">
                     <div className="flex justify-between items-start">
                         <div>
                             <h3 className="text-xl font-bold text-gray-800">{trip.config.country}</h3>
