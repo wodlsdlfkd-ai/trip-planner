@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { requestTripAction } from './tripApi.js';
+import ImportDialog from './ImportDialog.jsx';
 import { Plus, Trash2, Hotel, Wallet, Calendar, Calculator, MapPin, Clock, Utensils, X, ArrowLeft, Globe, Settings, Plane, CreditCard, Download, Loader2, Banknote, Users, LogOut, AlertCircle, Coffee, ShoppingBag, Camera, Bus, Pencil } from 'lucide-react';
 
 // --- Firebase Imports ---
@@ -105,6 +106,7 @@ const TravelPlanner = () => {
   
   const [tripData, setTripData] = useState(null);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -404,6 +406,7 @@ const TravelPlanner = () => {
              </div>
              <button disabled={IS_READ_ONLY} title={IS_READ_ONLY ? '자료 열람 모드' : '설정 수정'} onClick={openConfig} className="absolute top-4 right-4 p-1 text-gray-400 hover:text-blue-600"><Settings size={20}/></button>
              <button disabled={isBusy} onClick={handleDownloadExcel} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"><Download size={16}/> 엑셀 다운로드</button>
+             <button disabled={IS_READ_ONLY || isBusy} onClick={() => setIsImportOpen(true)} className="mt-4 ml-2 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"><Plus size={16}/> 자료로 일정 추가</button>
           </div>
           <nav aria-label="여행 날짜 선택" className="flex gap-2 overflow-x-auto pb-2">
             <button type="button" disabled={isBusy} aria-pressed={activeDay === 'preparation'} onClick={() => setSelectedDay('preparation')} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${activeDay === 'preparation' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300'}`}>준비</button>
@@ -494,6 +497,7 @@ const TravelPlanner = () => {
           </button>
         </main>
 
+        {isImportOpen && <ImportDialog trip={tripData} tripId={currentTripId} user={user} shareCode={shareCode} onClose={() => setIsImportOpen(false)} onSaved={count => showAlert(`${count}개 항목을 저장했습니다.`)}/>}
         {isModalOpen && editingItem && (
             <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto flex items-center justify-center p-4 print:hidden animate-fade-in-up">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4 my-8 relative">

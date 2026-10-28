@@ -59,15 +59,38 @@ export async function performTripAction(body, code, uid, store) {
       return { next, result: { tripId: requestId, version: now } };
     });
   }
-  if (!['saveItem', 'saveHotel', 'saveConfig'].includes(action)) fail('invalid-action', '지원하지 않는 작업입니다.');
+  if (!['saveItem', 'saveHotel', 'saveConfig', 'importItems'].includes(action)) fail('invalid-action', '지원하지 않는 작업입니다.');
   const tripId = text(body.tripId, '여행 ID', 100, true);
   if (!/^[a-zA-Z0-9_-]+$/.test(tripId)) fail('invalid-input', '여행 ID를 확인해 주세요.');
   if (!Object.hasOwn(body, 'expectedVersion')) fail('version-required', '여행을 다시 열어 주세요.', 409);
   return store.transaction(tripId, current => {
     if (!current || current.shareCode !== code) fail('forbidden', '접근할 수 없는 여행입니다.', 403);
+    if (action === 'importItems') {
+      const requestId = text(body.requestId, '요청 ID', 80, true);
+      if (!/^[a-zA-Z0-9-]{20,80}$/.test(requestId)) fail('invalid-input', '요청 ID를 확인해 주세요.');
+      const existingImport = current.importRequests?.[requestId];
+      if (existingImport) {
+        if (existingImport.uid !== uid) fail('forbidden', '접근할 수 없는 요청입니다.', 403);
+        return { result: { tripId, version: versionOf(current), imported: existingImport.count } };
+      }
+    }
     if (versionOf(current) !== body.expectedVersion) fail('conflict', '다른 변경이 먼저 저장되었습니다. 입력 내용은 남아 있습니다. 취소 후 다시 열어 최신 내용을 확인해 주세요.', 409);
     const next = structuredClone(current);
-    if (action === 'saveConfig') {
+    if (action === 'importItems') {
+      if (!Array.isArray(body.items) || !body.items.length || body.items.length > 30) fail('invalid-input', '저장할 항목은 1~30개여야 합니다.');
+      for (const entry of body.items) {
+        const prep = entry.dayId === 'preparation';
+        const target = prep ? (next.preparation ||= { schedule: [] }) : next.days.find(day => day.id === entry.dayId);
+        if (!target) fail('invalid-input', '일차를 확인해 주세요.');
+        target.schedule ||= [];
+        const item = validateItem(entry.item, prep);
+        target.schedule.push({ ...item, id: randomUUID(), dayId: entry.dayId });
+        if (!prep) target.schedule.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+      }
+      next.importRequests ||= {};
+      if (Object.keys(next.importRequests).length >= 1000) fail('invalid-input', '가져오기 기록이 가득 찼습니다.');
+      next.importRequests[body.requestId] = { uid, count: body.items.length };
+    } else if (action === 'saveConfig') {
       const config = validateConfig(body.config);
       if (config.duration !== current.config.duration) fail('invalid-input', '기존 여행의 기간 변경은 지원하지 않습니다.');
       next.config = config;
@@ -92,6 +115,6 @@ export async function performTripAction(body, code, uid, store) {
     // Version strings must change even when two writes occur within one millisecond.
     const previous = Date.parse(versionOf(current)) || 0;
     next.updatedAt = new Date(Math.max(Date.now(), previous + 1)).toISOString();
-    return { next, result: { tripId, version: next.updatedAt } };
+    return { next, result: { tripId, version: next.updatedAt, ...(action === 'importItems' ? { imported: body.items.length } : {}) } };
   });
 }

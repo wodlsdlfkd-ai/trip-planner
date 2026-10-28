@@ -75,6 +75,24 @@ test('rejects other-group IDs, missing versions and delete actions', async () =>
   await assert.rejects(() => performTripAction({ action: 'delete', tripId: created.tripId }, code, 'user-a', store), errorCode('invalid-action'));
 });
 
+test('import saves a batch atomically and a retry never creates duplicates', async () => {
+  const { store, created } = await seeded();
+  const dayId = store.documents.get(created.tripId).days[1].id;
+  const body = { action: 'importItems', tripId: created.tripId, expectedVersion: created.version, requestId: '0123456789-import-test-request', items: [
+    { dayId, item: { title: '예약', time: '10:30', type: 'activity', cost: 100, memo: '' } },
+    { dayId: 'preparation', item: { title: '항공권', type: 'flight', cost: 200, memo: '' } },
+  ] };
+  const saved = await performTripAction(body, code, 'user-a', store);
+  assert.equal(saved.imported, 2);
+  const state = structuredClone(store.documents.get(created.tripId));
+  assert.equal(state.days[1].schedule.filter(item => item.title === '예약').length, 1);
+  assert.equal(state.preparation.schedule.filter(item => item.title === '항공권').length, 1);
+  await performTripAction(body, code, 'user-a', store);
+  assert.deepEqual(store.documents.get(created.tripId), state);
+  await assert.rejects(() => performTripAction({ ...body, requestId: '0123456789-import-other-request' }, code, 'user-a', store), errorCode('conflict'));
+  assert.deepEqual(store.documents.get(created.tripId), state);
+});
+
 async function request({ method = 'POST', body = { action: 'capabilities', shareCode: code }, headers = {}, configured = true, tokenFails = false, limited = false } = {}) {
   const handler = createTripHandler(async () => {
     if (!configured) throw new TripError(503, 'editing-unavailable', '준비 중');
